@@ -4,7 +4,11 @@ import requests
 import logging
 
 # project constants
-from configuration import GAME_HUB_URL, USERNAME, LOGIN_URL
+from configuration import (
+    GAME_HUB_URL,
+    USERNAME,
+    LOGIN_URL
+)
 
 
 class GameClient:

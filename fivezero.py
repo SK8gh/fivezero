@@ -4,10 +4,16 @@
 
 from engine import FiveZeroEngine
 from client import GameClient
+from utils import Move, Board
+from datetime import datetime
 import configuration as conf
+import cProfile
 
 from abc import ABC
 import logging
+
+profiler = cProfile.Profile()
+profiler.enable()
 
 
 class EventParser(ABC):
@@ -23,6 +29,9 @@ class UserJoinedParser(EventParser):
 
         # extracting game information
         game_info = {k: v for k, v in game_info.items() if k in ('password', 'username', 'gameInfo')}
+
+        if 'gameInfo' not in game_info:
+            return
 
         game_info['color'] = game_info.pop('gameInfo')['color']
 
@@ -43,6 +52,8 @@ class MovePlayedParser(EventParser):
         # room name is mandatory to call the PlayMove method from the client
         move['room_name'] = room_name
 
+        logging.debug(f"Received {move['color'].lower()} move: [{move['row']}, {move['column']}]")
+
         return move
 
 
@@ -56,7 +67,6 @@ class FiveZeroBot:
             "UserJoined": self._on_user_joined,
             "SettingsChanged": self._on_settings_changed,
             "MovePlayed": self._on_move_played,
-            "OnError": self._on_error,
             "PlayerDisqualified": self._on_player_disqualified,
             "GameOver": self._on_game_over,
         }
@@ -80,6 +90,8 @@ class FiveZeroBot:
             # linking the event to the handler in the client objet directly
             self._client.link_event(event_name, handler)
 
+        self._client.hub.on_error(self._on_error)
+
     def _on_board_update(self, data):
         raise NotImplementedError
 
@@ -90,7 +102,7 @@ class FiveZeroBot:
         raise NotImplementedError
 
     def _on_settings_changed(self, data):
-        raise NotImplementedError
+        pass
 
     def _on_game_started(self, data):
         logging.info(f"Game has started")
@@ -99,16 +111,42 @@ class FiveZeroBot:
         raise NotImplementedError
 
     def _on_move_played(self, data):
+        """
+        called when a move is played on the board
+        """
         # parsing game information & player information
         move_data = self.parsers.get("MovePlayed").parse(data)
 
-        engine_move = self._engine.best_move(move_data)
+        # extracting the color of the move
+        move_color = move_data['color'].upper()
+
+        if conf.Colors[move_color] == self._engine.color:
+            # Engine received its own move as an update
+            return
+
+        # extracting the move made by the opponent from the parsed move data
+        opponent_move = Move(
+            index=Board.index(move_data['row'], move_data['column']),
+            color=conf.Colors[move_color].value
+        )
+
+        # Playing the move received from the other play
+        self._engine.board.move(opponent_move)
+
+        # computing the engine move
+        engine_move: Move = self._engine.search(
+            # previous move timestamp, used to compute the deadline timestamp at which the engine must answer
+            move_timestamp=datetime.fromisoformat(move_data['move_timestamp'])
+        )
+
+        self._engine.board.move(engine_move)
 
         self._client.play_move(
-            room_name=move_data['room_name'],
-            row=engine_move[0],
-            column=engine_move[1]
+            move=engine_move,
+            room=move_data['room_name']
         )
+
+        self._engine.board.print()
 
     def _on_user_joined(self, data):
         logging.info("User joined the game")
@@ -118,7 +156,18 @@ class FiveZeroBot:
 
         assert game_info['username'] == conf.USERNAME
 
-        self._engine.set_color(game_info['color'])
+        engine_color: str = game_info['color']
+
+        logging.info(f"FiveZero plays {engine_color}")
+
+        color_int = conf.Colors[engine_color.upper()]
+
+        self._engine.set_color(color_int)
 
     def _on_game_over(self, data):
-        raise NotImplementedError
+        logging.info(f"Game ended: {data[0]}! Disabling profiler")
+
+        profiler.disable()
+
+        logging.info(f"Dumping statistics")
+        profiler.dump_stats("fivezero.prof")
