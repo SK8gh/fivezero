@@ -1,11 +1,10 @@
 """
     gomoku, Puissance 5 engine, named after AlphaZero, the famous Go engine developed by Google DeepMind
 """
-
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, List
-from client import GameClient
-from utils import Board, Move
+from utils import Board, Move, cache
 import logging
 
 from configuration import (
@@ -22,21 +21,17 @@ class FiveZeroEngine:
     """
         Main engine class
     """
-    def __init__(self, client: GameClient):
-        self._config: EngineConfig = EngineConfig()
-        self._client: GameClient = client
+    def __init__(self, engine_color: int):
+        self.config: EngineConfig = EngineConfig()
 
         # engine plays the following color that will be set when joining a game
-        self.color = None
+        self.color = engine_color
 
         # board representation
         self.board = Board()
 
         if BYPASS_TIMEOUT:
             logging.warning(f"Engine timeout bypass is enabled")
-
-    def set_color(self, color: int) -> None:
-        self.color = color
 
     def _ident_pattern(self, pattern: str, color: int, board_bytes: Optional[bytearray]) -> List[Tuple[int]]:
         """
@@ -72,9 +67,11 @@ class FiveZeroEngine:
 
         return results
 
+    @cache
     def evaluate(self, board_bytes: bytearray) -> int:
         """
-        evaluation function performing the scoring of the board position
+        evaluation function performing the scoring of the board position. The board_bytes variable must be passed by
+        kwarg syntax only
 
         TODO: enhance readme, particularly on evaluate methods
         """
@@ -100,21 +97,21 @@ class FiveZeroEngine:
         """
         TODO: explain
         """
-        search_deadline = move_timestamp + timedelta(seconds=self._config.max_time)
+        search_deadline = move_timestamp + timedelta(seconds=self.config.max_time)
 
         best_move = None
 
         depth = 1
 
         # can't exceed the maximum engine recursion parameter
-        while depth <= self._config.max_depth:
+        while depth <= self.config.max_depth:
             try:
                 best_move = self._search_depth(
                     search_deadline=search_deadline,
                     depth=depth
                 )
 
-                logging.info(f"Depth {depth} completed")
+                logging.debug(f"Depth {depth} completed")
 
                 depth += 1
 
@@ -137,9 +134,14 @@ class FiveZeroEngine:
             reverse=True
         )
 
+        # raising if no candidate moves were found...
+        assert len(candidate_moves) > 0
+
+        logging.debug(f"Searching with depth {depth} amongst {len(candidate_moves)} possible moves")
+
         for move_index in candidate_moves:
             if self._timeout(search_deadline=search_deadline):
-                logging.info(f"Search timeout, returning best move")
+                logging.debug(f"Search timeout, returning best move")
                 raise TimeoutError()
 
             move = Move(
@@ -149,7 +151,7 @@ class FiveZeroEngine:
 
             board_copy = self.board.fork_move(move=move)
 
-            score = self._minimax(
+            score = self.minimax(
                 board=board_copy,
                 depth=depth - 1,
                 maximizing=False,
@@ -164,20 +166,26 @@ class FiveZeroEngine:
 
         return best_move
 
-    def _minimax(
+    def minimax(
         self,
         board: Board,
         depth: int,
         maximizing: bool,
         search_deadline: datetime,
         alpha: float = float("-inf"),
-        beta: float = float("inf")
+        beta: float = float("inf"),
+        stop_event: Optional[threading.Event] = None
     ):
+        if stop_event is not None and stop_event.is_set():
+            # engine pondering can be interrupted by the main thread. raising a timeout error to stop the search
+            raise TimeoutError()
+
         if self._timeout(search_deadline=search_deadline):
+            # engine thinking time exceeded
             raise TimeoutError()
 
         if depth == 0 or not board.closest_moves:
-            return self.evaluate(board)
+            return self.evaluate(board_bytes=board.board)
 
         moves = sorted(
             board.closest_moves,
@@ -196,13 +204,14 @@ class FiveZeroEngine:
 
                 new_board = board.fork_move(move)
 
-                score = self._minimax(
+                score = self.minimax(
                     board=new_board,
                     depth=depth - 1,
                     maximizing=False,
                     search_deadline=search_deadline,
                     alpha=alpha,
-                    beta=beta
+                    beta=beta,
+                    stop_event=stop_event
                 )
 
                 value = max(value, score)
@@ -227,13 +236,14 @@ class FiveZeroEngine:
 
                 new_board = board.fork_move(move)
 
-                score = self._minimax(
+                score = self.minimax(
                     board=new_board,
                     depth=depth - 1,
                     maximizing=True,
                     search_deadline=search_deadline,
                     alpha=alpha,
-                    beta=beta
+                    beta=beta,
+                    stop_event=stop_event
                 )
 
                 value = min(value, score)

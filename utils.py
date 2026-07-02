@@ -1,5 +1,6 @@
 from argparse import ArgumentParser, Namespace
 from dataclasses import dataclass, field
+from functools import wraps, lru_cache
 import logging
 
 from configuration import (
@@ -15,12 +16,6 @@ def parse_arguments() -> Namespace:
     parses arguments from the run/debug configuration
     """
     parser = ArgumentParser()
-
-    parser.add_argument(
-        "--password",
-        type=str,
-        required=True
-    )
 
     parser.add_argument(
         "--log_level",
@@ -141,8 +136,6 @@ class Board:
         # correcting the neighbors with allowed values (empty squares only)
         allowed = set((n for n in neighbors if self.get_index(n) == self.EMPTY))
 
-        logging.debug(f"Move: {self.coordinates(move.index)}, computed allowed and close moves: {allowed}")
-
         # adding new closest (possible) moves
         self.closest_moves.update(allowed)
 
@@ -220,3 +213,46 @@ class Board:
             print(" ".join(row))
 
         print()
+
+
+def cache(evaluation_function):
+    """
+    decorates the evaluation function, caching the results of the evaluation for a given board position to avoid
+    redundant computations
+    """
+    # stores the results of the evaluations
+    _cache: dict = dict()
+
+    # number of cache hits
+    _hits: int = 0
+
+    def _hash(board: bytearray) -> bytes:
+        """
+        computes a hash of the board position to be used as a key in the cache
+        """
+        return bytes(board)
+
+    @wraps(evaluation_function)
+    def wrapper(*args, **kwargs):
+        nonlocal _hits
+
+        board: bytearray = kwargs.get("board_bytes")
+
+        h = _hash(board)
+
+        if h not in _cache:
+            score = evaluation_function(*args, **kwargs)
+            _cache[h] = score
+        else:
+            score = _cache[h]
+            _hits += 1
+
+            logging.debug(f"Cache hit for board position={h[0: 3]}..., score={score}")
+
+        return score
+
+    wrapper.cache = _cache
+    wrapper.cache_hits = lambda: _hits
+    wrapper.cache_size = lambda: len(_cache)
+
+    return wrapper

@@ -3,29 +3,17 @@ from profilehooks import timecall
 from enum import IntEnum
 
 
-# Bot username
+# Engine name
 USERNAME = "FiveZero"
 
-# Main API url
-API = "https://api-connect5.dev.codebusters.cloud"
-
-# Logging route
-LOGIN_URL = f"{API}/api/auth/login"
-
-# Hub route
-GAME_HUB_URL = f"{API}/gameHub"
+# number of stones to line up to win
+WINNING_LENGTH = 5
 
 # Game board size
 BOARD_SIZE = 15
 
-# Time per move allowed by the API (s)
-MAX_TIME = 5
-
-# Accounting for a certain network latency when sending moves to the API, avoiding timeout losses
-MSG_LATENCY = 0.02
-
-# Thinking time seen from the engine's perspective
-THINKING_TIME = MAX_TIME - (2 * MSG_LATENCY)
+# Maximum thinking time
+MAX_TIME = 0.5
 
 # Using the following variable to bypass the timeout mechanism, for testing purposes only
 BYPASS_TIMEOUT = False
@@ -41,6 +29,9 @@ ENGINE_DEPTH = 5
 
 # Parallelization factor of root moves
 PARALLEL = 8
+
+# Can't play more moves that the number of squares on the board
+MAX_NUMBER_MOVES = BOARD_SIZE * BOARD_SIZE
 
 # Pattern directions
 DIRECTIONS = (
@@ -106,7 +97,7 @@ class EngineConfig:
         self.max_depth: int = ENGINE_DEPTH
 
         # maximum thinking time in seconds when performing searches
-        self.max_time: float = THINKING_TIME
+        self.max_time: float = MAX_TIME
 
 
 def index(x: int, y: int) -> int:
@@ -116,11 +107,11 @@ def index(x: int, y: int) -> int:
     return x * BOARD_SIZE + y
 
 
-def coordinates(index: int) -> tuple[int, int]:
+def coordinates(j: int) -> tuple[int, int]:
     """
     converts a 1D index to 2D coordinates (x, y) for the board
     """
-    return index // BOARD_SIZE, index % BOARD_SIZE
+    return j // BOARD_SIZE, j % BOARD_SIZE
 
 
 def cache_squares():
@@ -211,6 +202,10 @@ def _compute_pattern_indexation():
                     segments.append(segment)
 
         PATTERN_INDEXATION[length] = tuple(segments)
+
+
+# first engine move if engine plays black is set in advance
+FIRST_BLACK_MOVE_INDEX_ENGINE = index(BOARD_SIZE // 2, BOARD_SIZE // 2)
 
 
 @timecall
