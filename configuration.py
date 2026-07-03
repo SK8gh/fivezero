@@ -13,7 +13,7 @@ WINNING_LENGTH = 5
 BOARD_SIZE = 15
 
 # Maximum thinking time
-MAX_TIME = 0.5
+MAX_TIME = 1.5
 
 # Using the following variable to bypass the timeout mechanism, for testing purposes only
 BYPASS_TIMEOUT = False
@@ -29,6 +29,9 @@ ENGINE_DEPTH = 5
 
 # Parallelization factor of root moves
 PARALLEL = 8
+
+# Tempo factor, used to evaluate positions based on who has the trait
+TEMPO_FACTOR = 1.5
 
 # Can't play more moves that the number of squares on the board
 MAX_NUMBER_MOVES = BOARD_SIZE * BOARD_SIZE

@@ -1,6 +1,6 @@
 from argparse import ArgumentParser, Namespace
 from dataclasses import dataclass, field
-from functools import wraps, lru_cache
+from functools import wraps
 import logging
 
 from configuration import (
@@ -226,19 +226,20 @@ def cache(evaluation_function):
     # number of cache hits
     _hits: int = 0
 
-    def _hash(board: bytearray) -> bytes:
+    def _hash(board: bytearray, tempo: int) -> tuple:
         """
         computes a hash of the board position to be used as a key in the cache
         """
-        return bytes(board)
+        return tuple((bytes(board), tempo, ))
 
     @wraps(evaluation_function)
     def wrapper(*args, **kwargs):
         nonlocal _hits
 
-        board: bytearray = kwargs.get("board_bytes")
+        board: bytearray = kwargs.get('board_bytes')
+        tempo: int = kwargs.get('tempo')
 
-        h = _hash(board)
+        h = _hash(board, tempo)
 
         if h not in _cache:
             score = evaluation_function(*args, **kwargs)

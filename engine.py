@@ -10,6 +10,7 @@ import logging
 from configuration import (
     PATTERN_INDEXATION,
     BYPASS_TIMEOUT,
+    TEMPO_FACTOR,
     EngineConfig,
     NEIGHBORS,
     PATTERNS,
@@ -68,7 +69,7 @@ class FiveZeroEngine:
         return results
 
     @cache
-    def evaluate(self, board_bytes: bytearray) -> int:
+    def evaluate(self, board_bytes: bytearray, tempo: int) -> int:
         """
         evaluation function performing the scoring of the board position. The board_bytes variable must be passed by
         kwarg syntax only
@@ -87,9 +88,11 @@ class FiveZeroEngine:
                     color=color
                 )
 
-                factor = 1 if color == self.color else -1
+                sign = 1 if color == self.color else -1
+                tempo = TEMPO_FACTOR if color == tempo else 1.0
 
-                score += factor * len(results) * pattern_score
+                # the score depends on who has the tempo
+                score += int(sign * tempo * len(results) * pattern_score)
 
         return score
 
@@ -185,7 +188,11 @@ class FiveZeroEngine:
             raise TimeoutError()
 
         if depth == 0 or not board.closest_moves:
-            return self.evaluate(board_bytes=board.board)
+            # side to move at this leaf
+            opp = 1 if self.color == 2 else 2
+            tempo = self.color if maximizing else opp
+
+            return self.evaluate(board_bytes=board.board, tempo=tempo)
 
         moves = sorted(
             board.closest_moves,
