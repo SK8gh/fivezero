@@ -1,10 +1,10 @@
 from argparse import ArgumentParser, Namespace
 from dataclasses import dataclass, field
 from functools import wraps
+import numpy as np
 import logging
 
 from configuration import (
-    BYPASS_EVALUATION_CACHE,
     COORDINATE_TO_INDEX,
     INDEX_TO_COORDINATE,
     BOARD_SIZE,
@@ -191,27 +191,6 @@ class Board:
 
         self.n_moves = 0
 
-    def print(self) -> None:
-        """
-        Debug print of the board as a matrix.
-        Empty cells are shown as '.'
-        Black stones as '1'
-        White stones as '2'
-        """
-        print()
-
-        for x in range(BOARD_SIZE):
-            row = []
-
-            for y in range(BOARD_SIZE):
-                value = self.get(x, y)
-
-                if value == self.EMPTY:
-                    row.append(".")
-                else:
-                    row.append(str(value))
-
-            print(" ".join(row))
 
         print()
 
@@ -231,7 +210,7 @@ def cache(evaluation_function):
         """
         computes a hash of the board position to be used as a key in the cache
         """
-        return tuple((bytes(board), tempo, ))
+        return bytes(board), tempo
 
     @wraps(evaluation_function)
     def wrapper(*args, **kwargs):
@@ -242,7 +221,7 @@ def cache(evaluation_function):
 
         h = _hash(board, tempo)
 
-        if h not in _cache or BYPASS_EVALUATION_CACHE:
+        if h not in _cache:
             score = evaluation_function(*args, **kwargs)
             _cache[h] = score
         else:
@@ -258,3 +237,22 @@ def cache(evaluation_function):
     wrapper.cache_size = lambda: len(_cache)
 
     return wrapper
+
+
+def deterministic_vectors(vector_size: int, n_vectors: int, seed: int) -> list[tuple[int]]:
+    """
+    generates deterministic vectors of random numbers based on a given seed
+    """
+    rng = np.random.default_rng(seed)
+
+    vectors = rng.integers(
+        low=0,
+        high=BOARD_SIZE ** 2,
+        size=(n_vectors, vector_size),
+        dtype=np.int64
+    )
+
+    return [
+        tuple(int(x) for x in row)
+        for row in vectors
+    ]

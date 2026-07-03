@@ -18,9 +18,6 @@ MAX_TIME = 1.5
 # Using the following variable to bypass the timeout mechanism, for testing purposes only
 BYPASS_TIMEOUT = False
 
-# If set to true, the engine will not use the evaluation cache
-BYPASS_EVALUATION_CACHE = True
-
 # Move pruning maximum distance
 MOVE_MAX_DISTANCE = 2
 
@@ -28,7 +25,7 @@ MOVE_MAX_DISTANCE = 2
 NEIGHBORS = {index: set() for index in range(BOARD_SIZE * BOARD_SIZE)}
 
 # Maximum number of moves to look ahead for
-ENGINE_DEPTH = 5
+ENGINE_DEPTH = 2
 
 # Parallelization factor of root moves
 PARALLEL = 8
@@ -49,35 +46,58 @@ DIRECTIONS = (
 
 INDEX_TO_COORDINATE, COORDINATE_TO_INDEX = dict(), dict()
 
+FIVE = 1_000_000_000
+OPEN_FOUR = 10_000_000
+SIMPLE_FOUR = 1_000_000
+OPEN_THREE = 50_000
+BROKEN_THREE = 20_000
+OPEN_TWO = 2_000
+BROKEN_TWO = 300
+DOUBLE_FOUR = 5000000
+FOUR_THREE = 1500000
+DOUBLE_THREE = 500000
+BROKEN_FOUR = 80000
+CAPPED_THREE = 8000
+
 PATTERNS = {
     # Five
-    "11111": 100_000_000,
+    "11111": FIVE,
 
     # Open Four
-    "011110": 1_000_000,
+    "011110": OPEN_FOUR,
 
     # Closed Four / Simple Four
-    "11110": 100_000,
-    "01111": 100_000,
-    "11011": 100_000,
-    "10111": 100_000,
-    "11101": 100_000,
+    "11110": SIMPLE_FOUR,
+    "01111": SIMPLE_FOUR,
+    "11011": SIMPLE_FOUR,
+    "10111": SIMPLE_FOUR,
+    "11101": SIMPLE_FOUR,
+
+    # broken four variants
+    "011011": BROKEN_FOUR,
+    "110110": BROKEN_FOUR,
+
+    # capped three (one side blocked by opponent, still worth something)
+    "211100": CAPPED_THREE,
+    "001112": CAPPED_THREE,
+    "211010": CAPPED_THREE,
+    "010112": CAPPED_THREE,
 
     # Open Three
-    "01110": 10_000,
+    "01110": OPEN_THREE,
 
     # Broken Three / Jump Three
-    "011010": 5_000,
-    "010110": 5_000,
+    "011010": BROKEN_THREE,
+    "010110": BROKEN_THREE,
 
     # Open Two
-    "001100": 1_000,
-    "011000": 1_000,
-    "000110": 1_000,
+    "001100": OPEN_TWO,
+    "011000": OPEN_TWO,
+    "000110": OPEN_TWO,
 
     # Broken Two
-    "0010100": 100,
-    "0001010": 100,
+    "0010100": BROKEN_TWO,
+    "0001010": BROKEN_TWO,
 }
 
 # The following stores, for each length of patterns, a tuple containing the pre-computed set of indexes that will be

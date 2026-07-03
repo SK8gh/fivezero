@@ -2,9 +2,14 @@
     Testing the board object implementation
 """
 
-from configuration import BOARD_SIZE, NEIGHBORS
-from utils import Board, Move
 import unittest
+
+from utils import Board, Move
+
+from configuration import (
+    BOARD_SIZE,
+    NEIGHBORS
+)
 
 
 class TestFork(unittest.TestCase):

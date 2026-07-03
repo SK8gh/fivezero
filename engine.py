@@ -109,12 +109,12 @@ class FiveZeroEngine:
         # can't exceed the maximum engine recursion parameter
         while depth <= self.config.max_depth:
             try:
+                logging.info(f"Searching depth {depth}")
+
                 best_move = self._search_depth(
                     search_deadline=search_deadline,
                     depth=depth
                 )
-
-                logging.debug(f"Depth {depth} completed")
 
                 depth += 1
 

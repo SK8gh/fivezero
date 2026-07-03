@@ -2,11 +2,13 @@
     Testing the board object implementation
 """
 
-from engine import FiveZeroEngine
-from utils import Board, Move
+# library imports
+from time import perf_counter
 import unittest
 
-from configuration import Colors
+# module imports
+from utils import Board, Move, deterministic_vectors
+from engine import FiveZeroEngine
 
 
 class TestEnginePatternIdent(unittest.TestCase):
@@ -143,7 +145,7 @@ class TestEnginePatternIdent(unittest.TestCase):
                     board.move(move=move)
 
                 # identifying the patterns
-                result = engine._count_pattern(
+                result = engine._ident_pattern(
                     board_bytes=board.board,
                     pattern=pattern,
                     color=color
@@ -170,3 +172,53 @@ class TestBoardCache(unittest.TestCase):
 
         """
         pass
+
+
+class TestEvaluationPerformance(unittest.TestCase):
+    """
+    benchmark for the evaluation function, not a correctness test
+    """
+    def test_evaluation_speed(self):
+        # engine object
+        engine = FiveZeroEngine(engine_color=1)
+
+        # generating n_vectors random (fixed seed, deterministic values) sequences of n_moves
+        n_vectors, n_moves = 200, 10
+
+        # using my gf birthdate as seed <3
+        seed = 30111992
+
+        move_sequences = deterministic_vectors(
+            vector_size=n_moves,
+            n_vectors=n_vectors,
+            seed=seed
+        )
+
+        start = perf_counter()
+
+        for move_sequence in move_sequences:
+            # clearing the board
+            engine.board.clear()
+
+            # performing individual moves only
+            for j, index in enumerate(set(move_sequence)):
+                engine.board.move(Move(index, color=j % 2 + 1))
+
+            engine.evaluate(
+                board_bytes=engine.board.board,
+                tempo=len(move_sequence) % 2 + 1
+            )
+
+        elapsed = perf_counter() - start
+
+        print(f"""
+        performed {n_vectors} evaluations
+        elapsed: {elapsed:.3f}s
+        average: {elapsed / n_vectors * 1e3:.2f} ms/evaluation
+        """)
+
+        # cache append is still used but lookup is disabled
+        assert engine.evaluate.cache_size() == n_vectors
+
+        # no hits should happen
+        assert engine.evaluate.cache_hits() == 0
