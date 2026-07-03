@@ -7,6 +7,8 @@ from __future__ import annotations
 import threading
 import logging
 import pygame
+import sys
+import os
 
 from gomoku.players import Player, HumanPlayer, make_ai_player
 from gomoku.game import GomokuGame, BLACK, WHITE, opponent
@@ -14,10 +16,29 @@ from utils import parse_arguments
 import gomoku.ui as ui
 
 
+def _resource_path(rel: str) -> str:
+    """
+    resolves a bundled asset path in dev and inside PyInstaller freezes."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, rel)
+
+
 class App:
     def __init__(self) -> None:
         pygame.init()
         pygame.display.set_caption("Gomoku · FiveZero")
+
+        # loading the application icon as the pygame icon to avoid weird change
+        try:
+            icon_path = _resource_path("distribution/app.png")
+            logging.info(f"Loading icon from: {icon_path}")
+            logging.info(f"Exists: {os.path.exists(icon_path)}")
+            icon = pygame.image.load(icon_path)
+            pygame.display.set_icon(icon)
+            logging.info("Icon set successfully")
+        except Exception as e:
+            logging.warning("Could not load window icon: %s", e)
+
         self.screen = pygame.display.set_mode((ui.WIDTH, ui.HEIGHT))
         self.clock = pygame.time.Clock()
         self.fonts = ui.load_fonts()

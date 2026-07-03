@@ -2,9 +2,7 @@
     Testing the board object implementation
 """
 
-from unittest.mock import MagicMock, patch
 from engine import FiveZeroEngine
-from client import GameClient
 from utils import Board, Move
 import unittest
 
@@ -15,20 +13,12 @@ class TestEnginePatternIdent(unittest.TestCase):
     """
     testing engine pattern recognition
     """
-    @patch.object(GameClient, "_login")
-    @patch.object(GameClient, "_create_hub")
-    def test_pattern_ident(self, mock_create_hub, mock_login):
+    def test_pattern_ident(self):
         """
         testing various patterns as test cases
         """
-        mock_login.return_value = "token"
-
-        fake_hub = MagicMock()
-        mock_create_hub.return_value = fake_hub
-
-        client = GameClient("fake_password")
-
-        engine = FiveZeroEngine(client=client)
+        # engine plays black
+        engine = FiveZeroEngine(engine_color=1)
 
         board = engine.board
 
@@ -153,7 +143,7 @@ class TestEnginePatternIdent(unittest.TestCase):
                     board.move(move=move)
 
                 # identifying the patterns
-                result = engine._ident_pattern(
+                result = engine._count_pattern(
                     board_bytes=board.board,
                     pattern=pattern,
                     color=color

@@ -18,6 +18,9 @@ MAX_TIME = 1.5
 # Using the following variable to bypass the timeout mechanism, for testing purposes only
 BYPASS_TIMEOUT = False
 
+# If set to true, the engine will not use the evaluation cache
+BYPASS_EVALUATION_CACHE = True
+
 # Move pruning maximum distance
 MOVE_MAX_DISTANCE = 2
 

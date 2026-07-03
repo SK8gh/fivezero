@@ -92,6 +92,8 @@ class EnginePlayer(Player):
             # The engine just moved, the opponent is on the clock, triggering the pondering
             self._start_ponder()
 
+        logging.info(f"Engine evaluation: {self.engine.evaluate(board_bytes=self.engine.board.board, tempo=color)}")
+
     def compute_move(self, game) -> int | None:
         board = self.engine.board
 

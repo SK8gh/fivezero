@@ -4,6 +4,7 @@ from functools import wraps
 import logging
 
 from configuration import (
+    BYPASS_EVALUATION_CACHE,
     COORDINATE_TO_INDEX,
     INDEX_TO_COORDINATE,
     BOARD_SIZE,
@@ -241,7 +242,7 @@ def cache(evaluation_function):
 
         h = _hash(board, tempo)
 
-        if h not in _cache:
+        if h not in _cache or BYPASS_EVALUATION_CACHE:
             score = evaluation_function(*args, **kwargs)
             _cache[h] = score
         else:
