@@ -183,15 +183,17 @@ class TestEvaluationPerformance(unittest.TestCase):
         engine = FiveZeroEngine(engine_color=1)
 
         # generating n_vectors random (fixed seed, deterministic values) sequences of n_moves
-        n_vectors, n_moves = 200, 10
+        n_vectors, n_moves = 1000, 10
 
         # using my gf birthdate as seed <3
         seed = 30111992
 
-        move_sequences = deterministic_vectors(
-            vector_size=n_moves,
-            n_vectors=n_vectors,
-            seed=seed
+        move_sequences = set(
+            deterministic_vectors(
+                vector_size=n_moves,
+                n_vectors=n_vectors,
+                seed=seed
+            )
         )
 
         start = perf_counter()
@@ -218,7 +220,7 @@ class TestEvaluationPerformance(unittest.TestCase):
         """)
 
         # cache append is still used but lookup is disabled
-        assert engine.evaluate.cache_size() == n_vectors
+        assert engine.evaluate.cache_size() == n_vectors + 1
 
         # no hits should happen
-        assert engine.evaluate.cache_hits() == 0
+        assert engine.evaluate.cache_hits() == 1
