@@ -76,6 +76,7 @@ pyinstaller \
     --noconfirm \
     --name "$APP_NAME" \
     --icon "${APP_NAME}.icns" \
+    --add-data "${ICON_PNG}:distribution" \
     "$ENTRY"
 
 # ---- zip the .app straight into distribution/ ----

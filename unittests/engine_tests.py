@@ -2,33 +2,25 @@
     Testing the board object implementation
 """
 
-from unittest.mock import MagicMock, patch
-from engine import FiveZeroEngine
-from client import GameClient
-from utils import Board, Move
+# library imports
+from time import perf_counter
 import unittest
 
-from configuration import Colors
+# module imports
+from utils import Board, Move, deterministic_vectors
+from engine import FiveZeroEngine
 
 
 class TestEnginePatternIdent(unittest.TestCase):
     """
     testing engine pattern recognition
     """
-    @patch.object(GameClient, "_login")
-    @patch.object(GameClient, "_create_hub")
-    def test_pattern_ident(self, mock_create_hub, mock_login):
+    def test_pattern_ident(self):
         """
         testing various patterns as test cases
         """
-        mock_login.return_value = "token"
-
-        fake_hub = MagicMock()
-        mock_create_hub.return_value = fake_hub
-
-        client = GameClient("fake_password")
-
-        engine = FiveZeroEngine(client=client)
+        # engine plays black
+        engine = FiveZeroEngine(engine_color=1)
 
         board = engine.board
 
@@ -180,3 +172,55 @@ class TestBoardCache(unittest.TestCase):
 
         """
         pass
+
+
+class TestEvaluationPerformance(unittest.TestCase):
+    """
+    benchmark for the evaluation function, not a correctness test
+    """
+    def test_evaluation_speed(self):
+        # engine object
+        engine = FiveZeroEngine(engine_color=1)
+
+        # generating n_vectors random (fixed seed, deterministic values) sequences of n_moves
+        n_vectors, n_moves = 1000, 10
+
+        # using my gf birthdate as seed <3
+        seed = 30111992
+
+        move_sequences = set(
+            deterministic_vectors(
+                vector_size=n_moves,
+                n_vectors=n_vectors,
+                seed=seed
+            )
+        )
+
+        start = perf_counter()
+
+        for move_sequence in move_sequences:
+            # clearing the board
+            engine.board.clear()
+
+            # performing individual moves only
+            for j, index in enumerate(set(move_sequence)):
+                engine.board.move(Move(index, color=j % 2 + 1))
+
+            engine.evaluate(
+                board_bytes=engine.board.board,
+                tempo=len(move_sequence) % 2 + 1
+            )
+
+        elapsed = perf_counter() - start
+
+        print(f"""
+        performed {n_vectors} evaluations
+        elapsed: {elapsed:.3f}s
+        average: {elapsed / n_vectors * 1e3:.2f} ms/evaluation
+        """)
+
+        # cache append is still used but lookup is disabled
+        assert engine.evaluate.cache_size() == n_vectors + 1
+
+        # no hits should happen
+        assert engine.evaluate.cache_hits() == 1

@@ -92,6 +92,8 @@ class EnginePlayer(Player):
             # The engine just moved, the opponent is on the clock, triggering the pondering
             self._start_ponder()
 
+        logging.info(f"Engine evaluation: {self.engine.evaluate(board_bytes=self.engine.board.board, tempo=color)}")
+
     def compute_move(self, game) -> int | None:
         board = self.engine.board
 
@@ -183,7 +185,8 @@ class EnginePlayer(Player):
 
             # analyzing all potential replies
             for reply in replies:
-                if stop_event.is_set():  # stops pondering if the stopping event is triggered
+                if stop_event.is_set():
+                    # the pondering thread was signaled to stop running
                     return
 
                 # forking the board to analyze the reply and avoid modifying the current board state
@@ -193,16 +196,20 @@ class EnginePlayer(Player):
                     # no move to analyze after the reply, skipping
                     continue
 
-                # Engine to move from here → maximise, discard the score; the point is only to warm the evaluation cache
-                self.engine.minimax(
-                    board=after_reply,  # forked board
-                    depth=self.engine.config.max_depth,  # working with maximum depth
-                    maximizing=True,
-                    search_deadline=never,
-                    alpha=float("-inf"),
-                    beta=float("inf"),
-                    stop_event=stop_event
-                )
+                # iterative deepening: warm depth 1, 2, 3... just like real search
+                for depth in range(1, self.engine.config.max_depth + 1):
+                    if stop_event.is_set():
+                        return
+
+                    self.engine.minimax(
+                        board=after_reply,
+                        depth=depth,  # ← was self.engine.config.max_depth
+                        maximizing=True,
+                        search_deadline=never,
+                        alpha=float("-inf"),
+                        beta=float("inf"),
+                        stop_event=stop_event,
+                    )
 
         except TimeoutError:
             # engine's own deadline

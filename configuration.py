@@ -1,6 +1,7 @@
 from singleton_decorator import singleton
 from profilehooks import timecall
 from enum import IntEnum
+import numpy as np
 
 
 # Engine name
@@ -25,7 +26,7 @@ MOVE_MAX_DISTANCE = 2
 NEIGHBORS = {index: set() for index in range(BOARD_SIZE * BOARD_SIZE)}
 
 # Maximum number of moves to look ahead for
-ENGINE_DEPTH = 5
+ENGINE_DEPTH = 4
 
 # Parallelization factor of root moves
 PARALLEL = 8
@@ -46,35 +47,58 @@ DIRECTIONS = (
 
 INDEX_TO_COORDINATE, COORDINATE_TO_INDEX = dict(), dict()
 
+FIVE = 1_000_000_000
+OPEN_FOUR = 10_000_000
+SIMPLE_FOUR = 1_000_000
+OPEN_THREE = 50_000
+BROKEN_THREE = 20_000
+OPEN_TWO = 2_000
+BROKEN_TWO = 300
+DOUBLE_FOUR = 5000000
+FOUR_THREE = 1500000
+DOUBLE_THREE = 500000
+BROKEN_FOUR = 80000
+CAPPED_THREE = 8000
+
 PATTERNS = {
     # Five
-    "11111": 100_000_000,
+    "11111": FIVE,
 
     # Open Four
-    "011110": 1_000_000,
+    "011110": OPEN_FOUR,
 
     # Closed Four / Simple Four
-    "11110": 100_000,
-    "01111": 100_000,
-    "11011": 100_000,
-    "10111": 100_000,
-    "11101": 100_000,
+    "11110": SIMPLE_FOUR,
+    "01111": SIMPLE_FOUR,
+    "11011": SIMPLE_FOUR,
+    "10111": SIMPLE_FOUR,
+    "11101": SIMPLE_FOUR,
+
+    # broken four variants
+    "011011": BROKEN_FOUR,
+    "110110": BROKEN_FOUR,
+
+    # capped three (one side blocked by opponent, still worth something)
+    "211100": CAPPED_THREE,
+    "001112": CAPPED_THREE,
+    "211010": CAPPED_THREE,
+    "010112": CAPPED_THREE,
 
     # Open Three
-    "01110": 10_000,
+    "01110": OPEN_THREE,
 
     # Broken Three / Jump Three
-    "011010": 5_000,
-    "010110": 5_000,
+    "011010": BROKEN_THREE,
+    "010110": BROKEN_THREE,
 
     # Open Two
-    "001100": 1_000,
-    "011000": 1_000,
-    "000110": 1_000,
+    "001100": OPEN_TWO,
+    "011000": OPEN_TWO,
+    "000110": OPEN_TWO,
 
     # Broken Two
-    "0010100": 100,
-    "0001010": 100,
+    "0010100": BROKEN_TWO,
+    "0001010": BROKEN_TWO,
 }
 
 # The following stores, for each length of patterns, a tuple containing the pre-computed set of indexes that will be
@@ -211,6 +235,37 @@ def _compute_pattern_indexation():
 FIRST_BLACK_MOVE_INDEX_ENGINE = index(BOARD_SIZE // 2, BOARD_SIZE // 2)
 
 
+# Base-3 encoding of a pattern string. "01110" -> 0*81+1*27+1*9+1*3+0 = 39.
+def _encode_pattern(pattern: str) -> int:
+    result = 0
+    for c in pattern:
+        result = result * 3 + int(c)
+    return result
+
+
+# Numpy structures consumed by the JIT-compiled evaluator.
+#   SEG_INDICES[length] : int32 array of shape (n_segments, length) — flat board indices
+#   SCORE_ARRAY[length] : int64 array indexed by the base-3 signature -> pattern score (0 = none)
+#   EVAL_TABLES         : flat [(SEG_INDICES[L], SCORE_ARRAY[L]), ...] the engine loops over
+SEG_INDICES = {}
+SCORE_ARRAY = {}
+EVAL_TABLES = []
+
+
+def _compute_eval_tables():
+    """Must run AFTER _compute_pattern_indexation(): derives numpy tables from it."""
+    for length, segments in PATTERN_INDEXATION.items():
+        SEG_INDICES[length] = np.array(segments, dtype=np.int32)
+        table = np.zeros(3 ** length, dtype=np.int64)
+        for pattern, score in PATTERNS.items():
+            if len(pattern) == length:
+                table[_encode_pattern(pattern)] = score
+        SCORE_ARRAY[length] = table
+    EVAL_TABLES.clear()
+    for length in sorted(SEG_INDICES):
+        EVAL_TABLES.append((SEG_INDICES[length], SCORE_ARRAY[length]))
+
+
 @timecall
 def initialize_config():
     # pre-computing neighbors ahead of plays
@@ -221,6 +276,8 @@ def initialize_config():
 
     # pre-computing pattern indexation lookup
     _compute_pattern_indexation()
+
+    _compute_eval_tables()
 
 
 initialize_config()
