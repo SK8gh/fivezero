@@ -1,10 +1,12 @@
 """
     gomoku, Puissance 5 engine, named after AlphaZero, the famous Go engine developed by Google DeepMind
 """
-import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, List
 from utils import Board, Move, cache
+from numba import njit
+import numpy as np
+import threading
 import logging
 
 from configuration import (
@@ -12,9 +14,8 @@ from configuration import (
     BYPASS_TIMEOUT,
     TEMPO_FACTOR,
     EngineConfig,
+    EVAL_TABLES,
     NEIGHBORS,
-    PATTERNS,
-    Colors,
 )
 
 
@@ -30,6 +31,9 @@ class FiveZeroEngine:
 
         # board representation
         self.board = Board()
+
+        # warming-up the evaluation
+        self.evaluate(board_bytes=self.board.board, tempo=self.color)
 
         if BYPASS_TIMEOUT:
             logging.warning(f"Engine timeout bypass is enabled")
@@ -67,34 +71,6 @@ class FiveZeroEngine:
                 results.append(segment)
 
         return results
-
-    @cache
-    def evaluate(self, board_bytes: bytearray, tempo: int) -> int:
-        """
-        evaluation function performing the scoring of the board position. The board_bytes variable must be passed by
-        kwarg syntax only
-
-        TODO: enhance readme, particularly on evaluate methods
-        """
-        # initializing the score
-        score = 0
-
-        # performing the evaluation for each color
-        for color in Colors:
-            for pattern, pattern_score in PATTERNS.items():
-                results = self._ident_pattern(
-                    board_bytes=board_bytes,
-                    pattern=pattern,
-                    color=color
-                )
-
-                sign = 1 if color == self.color else -1
-                tempo = TEMPO_FACTOR if color == tempo else 1.0
-
-                # the score depends on who has the tempo
-                score += int(sign * tempo * len(results) * pattern_score)
-
-        return score
 
     def search(self, move_timestamp: datetime) -> Move:
         """
@@ -271,3 +247,85 @@ class FiveZeroEngine:
 
         # caution, if the bypass timeout global variable is set to true, the engine will never time out
         return now >= search_deadline and not BYPASS_TIMEOUT
+
+    @cache
+    def evaluate(self, board_bytes: bytearray, tempo: int) -> int:
+        """
+        Tempo-aware board scoring, JIT-accelerated.
+
+        Same scoring semantics as before (sum of pattern scores, engine positive /
+        opponent negative, side-to-move amplified by TEMPO_FACTOR), but:
+          - signatures are base-3 ints (no string building)
+          - each segment scanned once for both colors
+          - empty segments skipped
+          - score looked up in a dense table
+          - the whole scan runs as Numba-compiled native code
+        NOTE: this also fixes the old `tempo` variable shadowing — the factor is now
+        applied correctly per color (it previously stayed 1.0 after the first pattern).
+        """
+        opp = 1 if self.color == 2 else 2
+        engine_factor = TEMPO_FACTOR if self.color == tempo else 1.0
+        opp_factor = TEMPO_FACTOR if opp == tempo else 1.0
+
+        # zero-copy view over the bytearray buffer
+        board_np = np.frombuffer(board_bytes, dtype=np.uint8)
+
+        total = 0.0
+        for seg_idx, score_table in EVAL_TABLES:
+            total += _eval_length(
+                board_np,
+                seg_idx,
+                score_table,
+                self.color,
+                opp,
+                engine_factor,
+                opp_factor
+            )
+        return int(total)
+
+
+@njit(cache=True, nogil=True)
+def _eval_length(
+        board_np,
+        seg_idx,
+        score_table,
+        engine_color,
+        opp,
+        engine_factor,
+        opp_factor
+):
+    """
+    JIT-compiled scan of every segment of one length. For each segment it builds
+    both color signatures (base-3 int) in a single pass, skips empty segments,
+    and looks the score up in a dense table. nogil=True lets this run outside the
+    GIL (useful later for threaded root search).
+    """
+    total = 0.0
+    n_seg, length = seg_idx.shape
+    for s in range(n_seg):
+        sig_e = 0
+        sig_o = 0
+        any_stone = False
+        for j in range(length):
+            v = board_np[seg_idx[s, j]]
+            if v == 0:
+                code_e = 0
+                code_o = 0
+            elif v == engine_color:
+                code_e = 1
+                code_o = 2
+                any_stone = True
+            else:
+                code_e = 2
+                code_o = 1
+                any_stone = True
+            sig_e = sig_e * 3 + code_e
+            sig_o = sig_o * 3 + code_o
+        if any_stone:
+            se = score_table[sig_e]
+            if se != 0:
+                total += engine_factor * se
+            so = score_table[sig_o]
+            if so != 0:
+                total -= opp_factor * so
+    return total

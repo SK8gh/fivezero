@@ -1,6 +1,7 @@
 from singleton_decorator import singleton
 from profilehooks import timecall
 from enum import IntEnum
+import numpy as np
 
 
 # Engine name
@@ -25,7 +26,7 @@ MOVE_MAX_DISTANCE = 2
 NEIGHBORS = {index: set() for index in range(BOARD_SIZE * BOARD_SIZE)}
 
 # Maximum number of moves to look ahead for
-ENGINE_DEPTH = 2
+ENGINE_DEPTH = 4
 
 # Parallelization factor of root moves
 PARALLEL = 8
@@ -234,6 +235,37 @@ def _compute_pattern_indexation():
 FIRST_BLACK_MOVE_INDEX_ENGINE = index(BOARD_SIZE // 2, BOARD_SIZE // 2)
 
 
+# Base-3 encoding of a pattern string. "01110" -> 0*81+1*27+1*9+1*3+0 = 39.
+def _encode_pattern(pattern: str) -> int:
+    result = 0
+    for c in pattern:
+        result = result * 3 + int(c)
+    return result
+
+
+# Numpy structures consumed by the JIT-compiled evaluator.
+#   SEG_INDICES[length] : int32 array of shape (n_segments, length) — flat board indices
+#   SCORE_ARRAY[length] : int64 array indexed by the base-3 signature -> pattern score (0 = none)
+#   EVAL_TABLES         : flat [(SEG_INDICES[L], SCORE_ARRAY[L]), ...] the engine loops over
+SEG_INDICES = {}
+SCORE_ARRAY = {}
+EVAL_TABLES = []
+
+
+def _compute_eval_tables():
+    """Must run AFTER _compute_pattern_indexation(): derives numpy tables from it."""
+    for length, segments in PATTERN_INDEXATION.items():
+        SEG_INDICES[length] = np.array(segments, dtype=np.int32)
+        table = np.zeros(3 ** length, dtype=np.int64)
+        for pattern, score in PATTERNS.items():
+            if len(pattern) == length:
+                table[_encode_pattern(pattern)] = score
+        SCORE_ARRAY[length] = table
+    EVAL_TABLES.clear()
+    for length in sorted(SEG_INDICES):
+        EVAL_TABLES.append((SEG_INDICES[length], SCORE_ARRAY[length]))
+
+
 @timecall
 def initialize_config():
     # pre-computing neighbors ahead of plays
@@ -244,6 +276,8 @@ def initialize_config():
 
     # pre-computing pattern indexation lookup
     _compute_pattern_indexation()
+
+    _compute_eval_tables()
 
 
 initialize_config()
