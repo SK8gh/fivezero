@@ -54,6 +54,7 @@ def load_fonts() -> dict[str, pygame.font.Font]:
         "title": pick(56),
         "mode": pick(26),
         "status": pick(23),
+        "label": pick(20),
         "small": pick(16),
         "hint": pick(14),
     }
@@ -196,10 +197,18 @@ def draw_game(surface, fonts, game, status, hover_idx, current_color, thinking=F
 
 class Menu:
     """
-    game menu to choosing the mode and colors
+    game menu to choose the color and start a game
     """
     STONE_R = 24
     _GAP = 46
+
+    # vertical layout: three blocks evenly spaced around the window's center,
+    # so the stones sit dead-center and title / Play are equidistant from them
+    _CENTER_Y = (HEADER + HEIGHT - FOOTER) // 2
+    _STEP = 132
+    _TITLE_Y = _CENTER_Y - _STEP
+    _STONES_Y = _CENTER_Y
+    _PLAY_Y = _CENTER_Y + _STEP
 
     def __init__(self) -> None:
         # default human player
@@ -212,12 +221,10 @@ class Menu:
         R = self.STONE_R
 
         regions = {
-            "color_black": pygame.Rect(cx - self._GAP - R, 320 - R, 2 * R, 2 * R),
-            "color_white": pygame.Rect(cx + self._GAP - R, 320 - R, 2 * R, 2 * R),
-            "play_hva": fonts["mode"].render("Human vs AI", True, TEXT)
-                        .get_rect(center=(cx, 452)),
-            "mode_ai": fonts["mode"].render("AI vs AI", True, TEXT_FAINT)
-                       .get_rect(center=(cx, 504)),
+            "color_black": pygame.Rect(cx - self._GAP - R, self._STONES_Y - R, 2 * R, 2 * R),
+            "color_white": pygame.Rect(cx + self._GAP - R, self._STONES_Y - R, 2 * R, 2 * R),
+            "play_hva": fonts["mode"].render("Play", True, TEXT)
+                        .get_rect(center=(cx, self._PLAY_Y)),
         }
 
         self._regions = regions
@@ -244,11 +251,9 @@ class Menu:
         surface.fill(MENU_BG)
         cx = WIDTH // 2
 
-        _text(surface, fonts["title"], "Gomoku", TEXT, (cx, 168))
+        _text(surface, fonts["title"], "Gomoku", TEXT, (cx, self._TITLE_Y))
 
         r = self._compute_regions(fonts)
-
-        _text(surface, fonts["hint"], "you play", TEXT_SUB, (cx, 268))
 
         self._stone(
             surface,
@@ -271,7 +276,7 @@ class Menu:
         _text(
             surface,
             fonts["mode"],
-            "Human vs AI",
+            "Play",
             TEXT if hovered else TEXT_SUB,
             r["play_hva"].center
         )
@@ -279,22 +284,6 @@ class Menu:
         if hovered:
             y = r["play_hva"].bottom + 4
             pygame.draw.line(surface, TEXT, (r["play_hva"].left, y), (r["play_hva"].right, y), 2)
-
-        _text(
-            surface,
-            fonts["mode"],
-            "AI vs AI",
-            TEXT_FAINT,
-            r["mode_ai"].center
-        )
-
-        _text(
-            surface,
-            fonts["hint"],
-            "soon",
-            TEXT_FAINT,
-            (r["mode_ai"].centerx, r["mode_ai"].bottom + 13)
-        )
 
     def hit(self, pos) -> str | None:
         for key, rect in self._regions.items():
