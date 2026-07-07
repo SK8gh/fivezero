@@ -1,11 +1,12 @@
+"""
+    project configuration storing constants & initializing pre-computed values for performance enhancement
+"""
+
 from singleton_decorator import singleton
 from profilehooks import timecall
+from typing import Optional
 from enum import IntEnum
 import numpy as np
-
-
-# Engine name
-USERNAME = "FiveZero"
 
 # number of stones to line up to win
 WINNING_LENGTH = 5
@@ -27,9 +28,6 @@ NEIGHBORS = {index: set() for index in range(BOARD_SIZE * BOARD_SIZE)}
 
 # Maximum number of moves to look ahead for
 ENGINE_DEPTH = 4
-
-# Parallelization factor of root moves
-PARALLEL = 8
 
 # Tempo factor, used to evaluate positions based on who has the trait
 TEMPO_FACTOR = 1.5
@@ -119,12 +117,25 @@ class Colors(IntEnum):
 
 @singleton
 class EngineConfig:
-    def __init__(self):
+    def __init__(self, extra: Optional[dict]):
+        """
+        engine configuration, including "extra" parameters coming from a specification object
+        """
         # maximum engine depth when performing searches
         self.max_depth: int = ENGINE_DEPTH
 
         # maximum thinking time in seconds when performing searches
         self.max_time: float = MAX_TIME
+
+        # the "extra" attribute can be empty
+        self.extra = extra or {}
+
+    def get(self, param: str):
+        """
+        getting configuration parameter from "extra"
+        """
+        # safe get
+        return self.extra.get(param)
 
 
 def index(x: int, y: int) -> int:

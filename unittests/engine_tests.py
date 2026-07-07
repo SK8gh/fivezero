@@ -20,7 +20,7 @@ class TestEnginePatternIdent(unittest.TestCase):
         testing various patterns as test cases
         """
         # engine plays black
-        engine = FiveZeroEngine(engine_color=1)
+        engine = FiveZeroEngine(engine_color=1, spec=None)
 
         board = engine.board
 
@@ -180,7 +180,7 @@ class TestEvaluationPerformance(unittest.TestCase):
     """
     def test_evaluation_speed(self):
         # engine object
-        engine = FiveZeroEngine(engine_color=1)
+        engine = FiveZeroEngine(engine_color=1, spec=None)
 
         # generating n_vectors random (fixed seed, deterministic values) sequences of n_moves
         n_vectors, n_moves = 1000, 10

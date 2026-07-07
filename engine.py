@@ -3,6 +3,7 @@
 """
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, List
+from dataclasses import dataclass, field
 from utils import Board, Move, cache
 from numba import njit
 import numpy as np
@@ -19,12 +20,24 @@ from configuration import (
 )
 
 
+@dataclass
+class EngineSpec:
+    """
+    defines a selectable engine version in the UI
+    """
+    id: str
+    blurb: str
+    params: dict = field(default_factory=dict)
+
+
 class FiveZeroEngine:
     """
         Main engine class
     """
-    def __init__(self, engine_color: int):
-        self.config: EngineConfig = EngineConfig()
+    def __init__(self, engine_color: int, spec: Optional[EngineSpec]):
+        self.config: EngineConfig = EngineConfig(
+            extra=self._manage_spec(spec=spec)
+        )
 
         # engine plays the following color that will be set when joining a game
         self.color = engine_color
@@ -37,6 +50,13 @@ class FiveZeroEngine:
 
         if BYPASS_TIMEOUT:
             logging.warning(f"Engine timeout bypass is enabled")
+
+    def _manage_spec(self, spec: Optional[EngineSpec]) -> dict:
+        """
+        treating the engine specifications passed as argument to declare a dictionary that will be used throughout the
+        engine as a complementary configuration parameter
+        """
+        return spec.params
 
     def _ident_pattern(self, pattern: str, color: int, board_bytes: Optional[bytearray]) -> List[Tuple[int]]:
         """
@@ -85,7 +105,7 @@ class FiveZeroEngine:
         # can't exceed the maximum engine recursion parameter
         while depth <= self.config.max_depth:
             try:
-                logging.info(f"Searching depth {depth}")
+                logging.debug(f"Searching depth {depth}")
 
                 best_move = self._search_depth(
                     search_deadline=search_deadline,
@@ -270,18 +290,19 @@ class FiveZeroEngine:
         # zero-copy view over the bytearray buffer
         board_np = np.frombuffer(board_bytes, dtype=np.uint8)
 
-        total = 0.0
+        score = 0.0
+
         for seg_idx, score_table in EVAL_TABLES:
-            total += _eval_length(
-                board_np,
-                seg_idx,
-                score_table,
-                self.color,
-                opp,
-                engine_factor,
-                opp_factor
+            score += _eval_length(
+                board_np=board_np,
+                seg_idx=seg_idx,
+                score_table=score_table,
+                engine_color=self.color,
+                engine_factor=engine_factor,
+                opp_factor=opp_factor
             )
-        return int(total)
+
+        return int(score)
 
 
 @njit(cache=True, nogil=True)
@@ -290,7 +311,6 @@ def _eval_length(
         seg_idx,
         score_table,
         engine_color,
-        opp,
         engine_factor,
         opp_factor
 ):

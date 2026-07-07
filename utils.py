@@ -192,9 +192,6 @@ class Board:
         self.n_moves = 0
 
 
-        print()
-
-
 def cache(evaluation_function):
     """
     decorates the evaluation function, caching the results of the evaluation for a given board position to avoid

@@ -34,14 +34,15 @@ class Player:
         """
         raise NotImplementedError
 
-    def notify_move(self, index: int, color: int) -> None:
-        """
-        signals when a move was played by either player
-        """
-
     def close(self) -> None:
         """
         Release any background resources (threads). No-op by default
+        """
+        raise NotImplementedError
+
+    def notify_move(self, index: int, color: int) -> None:
+        """
+        signals when a move was played by either player
         """
 
 
@@ -62,7 +63,7 @@ class EnginePlayer(Player):
         super().__init__(color)
 
         # engine instance computing move responses
-        self.engine = FiveZeroEngine(engine_color=color)
+        self.engine = FiveZeroEngine(engine_color=color, spec=None)
 
         # thread used to ponder the next move while the player is thinking
         self._ponder_thread: threading.Thread | None = None
@@ -225,3 +226,26 @@ def make_ai_player(color: int) -> Player:
     returns an AI player object
     """
     return EnginePlayer(color)
+
+
+def build_players(mode: str, human_color: int = Colors.BLACK) -> dict[int, Player]:
+    """
+    Builds the {color: Player} mapping for a new game. Black always moves first.
+
+    mode:
+        "pvai" -> human vs FiveZero engine (human_color chooses the human's side)
+        "pvp"  -> human vs human (human_color is ignored, both sides are humans)
+    """
+    black, white = Colors.BLACK, Colors.WHITE
+
+    if mode == "pvp":
+        return {black: HumanPlayer(black), white: HumanPlayer(white)}
+
+    if mode == "pvai":
+        ai_color = white if human_color == black else black
+        return {
+            human_color: HumanPlayer(human_color),
+            ai_color: make_ai_player(ai_color),
+        }
+
+    raise ValueError(f"unknown game mode: {mode!r}")
