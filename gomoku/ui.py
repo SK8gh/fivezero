@@ -10,7 +10,7 @@ import math
 
 # module imports
 from gomoku.game import BOARD_SIZE, BLACK, WHITE, EMPTY, coordinates
-from arena import MODEL_CATALOG
+from arena.catalog import MODEL_CATALOG
 
 # Layout variables
 CELL = 42
@@ -300,7 +300,7 @@ class Menu:
         self.human_color = BLACK
 
         # developer / god mode: reveals the AI vs AI option
-        self.dev_mode = False
+        self.dev_mode = True
 
         # switch slide animation state (0 = off, 1 = on)
         self._anim = 0.0
@@ -541,6 +541,11 @@ class AvaMenu:
 
         _text(surface, fonts["title"], "AI vs AI", TEXT, (cx, 78))
 
+        _text(surface, fonts["label"], "Engine 1", TEXT,
+              (int(WIDTH * self._COL_A), self._SEL_Y - 52))
+        _text(surface, fonts["label"], "Engine 2", TEXT,
+              (int(WIDTH * self._COL_B), self._SEL_Y - 52))
+
         self._selector(surface, fonts, "a", self.a_idx, mouse)
         self._selector(surface, fonts, "b", self.b_idx, mouse)
 
@@ -674,8 +679,18 @@ def draw_arena_hud(surface, fonts, arena) -> None:
     _text(surface, fonts["status"], score, TEXT, (cx, panel.centery - 8))
 
     if arena.finished:
-        sub = f"Done playing · {arena.games_played} games"
+        # who won, plus the statistical confidence (p-value)
+        if arena.wins_a == arena.wins_b:
+            verdict = "even"
+        elif arena.wins_a > arena.wins_b:
+            verdict = f"{arena.spec_a.id} wins"
+        else:
+            verdict = f"{arena.spec_b.id} wins"
 
+        if arena.p is not None:
+            sub = f"{verdict}  ·  p = {arena.p:.3f}  ·  {arena.games_played} games"
+        else:
+            sub = f"{verdict}  ·  {arena.games_played} games"
     else:
         total = "∞" if arena.total_games == 0 else str(arena.total_games)
         sub = f"game {arena.games_played + 1} / {total}"

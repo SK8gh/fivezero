@@ -38,7 +38,6 @@ class Player:
         """
         Release any background resources (threads). No-op by default
         """
-        raise NotImplementedError
 
     def notify_move(self, index: int, color: int) -> None:
         """
@@ -96,12 +95,6 @@ class EnginePlayer(Player):
         logging.info(f"Engine evaluation: {self.engine.evaluate(board_bytes=self.engine.board.board, tempo=color)}")
 
     def compute_move(self, game) -> int | None:
-        board = self.engine.board
-
-        if not board.closest_moves:
-            # engine to start, the first move is predefined
-            board.closest_moves = {FIRST_BLACK_MOVE_INDEX_ENGINE}
-
         move = self.engine.search(
             move_timestamp=datetime.now(timezone.utc)
         )

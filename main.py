@@ -2,6 +2,7 @@
     Gomoku application main loop, handling events and rendering the game state
 """
 
+# library imports
 from __future__ import annotations
 
 import threading
@@ -10,9 +11,10 @@ import pygame
 import sys
 import os
 
+# module imports
 from gomoku.players import Player, build_players
 from gomoku.game import GomokuGame, BLACK, WHITE
-from arena import Arena, build_engine
+from arena.arena import Arena, build_engine
 from utils import parse_arguments
 import gomoku.ui as ui
 
@@ -126,8 +128,17 @@ class App:
         # pondering off: each engine only computes on its own move, so the time
         # budget alone decides the match (fair A/B comparison)
         self.players = {
-            BLACK: build_engine(black_spec, BLACK, self.arena.time_ms),
-            WHITE: build_engine(white_spec, WHITE, self.arena.time_ms),
+            BLACK: build_engine(
+                spec=black_spec,
+                color=BLACK,
+                time_ms=self.arena.time_ms
+            ),
+
+            WHITE: build_engine(
+                spec=white_spec,
+                color=WHITE,
+                time_ms=self.arena.time_ms
+            ),
         }
 
         self._reset_ai()
@@ -175,8 +186,9 @@ class App:
         def worker(p, g):
             try:
                 self._ai_result = p.compute_move(g)
-            except Exception as exc:  # noqa: BLE001
-                self._ai_error = exc
+            except (Exception, ) as e:
+                self._ai_error = e
+                raise e
             finally:
                 self._ai_pending = False
 
@@ -217,6 +229,7 @@ class App:
         if self._arena_next_at is None:
             self._arena_next_at = now + self.PAUSE
             return
+
         if now < self._arena_next_at:
             return
 

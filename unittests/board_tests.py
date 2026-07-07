@@ -189,6 +189,28 @@ class TestBoardMoves(unittest.TestCase):
 
         self.assertEqual(len(d), BOARD_SIZE ** 2)
 
+    def test_board_history(self):
+        """
+        testing if the history of moves of a board is congruent with the performed moves
+        """
+        # creating virgin board object
+        board = Board()
+
+        # performing a few moves
+        moves = [
+            112,  # storing moves as indexes
+            113,
+            114,
+            115,
+            116,
+            117
+        ]
+
+        for j, index in enumerate(moves):
+            board.move(move=Move(index=index, color=j % 2 + 1))
+
+        self.assertEqual(moves, board.history)
+
 
 class TestPlayableMoves(unittest.TestCase):
     """
@@ -242,7 +264,8 @@ class TestPlayableMoves(unittest.TestCase):
                 # computing the move to perform from the coordinates
                 index = board.index(*coordinates)
 
-                expected_neighbors = {board.coordinates(n) for n in NEIGHBORS[index]}  # expected neighbors must be converted to indexes
+                # expected neighbors must be converted to indexes
+                expected_neighbors = {board.coordinates(n) for n in NEIGHBORS[index]}
 
                 self.assertEqual(neighbors, expected_neighbors)
 

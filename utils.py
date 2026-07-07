@@ -5,10 +5,14 @@ import numpy as np
 import logging
 
 from configuration import (
+    FIRST_BLACK_MOVE_INDEX_ENGINE,
     COORDINATE_TO_INDEX,
     INDEX_TO_COORDINATE,
+    CENTER_WEIGHTS,
+    CENTRAL_COEF,
     BOARD_SIZE,
-    NEIGHBORS
+    NEIGHBORS,
+    Colors
 )
 
 
@@ -51,14 +55,17 @@ class Board:
 
     # "playable" closest moves, a set of empty squares at a maximum distance of a placed stone
     closest_moves: set[int] = field(
-        default_factory=lambda: set()
+        default_factory=lambda: {FIRST_BLACK_MOVE_INDEX_ENGINE, }
     )
 
     n_moves: int = 0  # number of moves
 
-    history: list[Move] = field(
+    history: list[int] = field(
         default_factory=lambda: []
     )
+
+    # centrality score of the board, used for evaluation
+    centrality: int = 0
 
     def __eq__(self, other: "Board"):
         """
@@ -99,7 +106,7 @@ class Board:
         making a move on the board, making sure the square is empty before assigning the color
         """
         # invalid move, the board square is already occupied
-        assert self.get_index(move.index) == self.EMPTY
+        assert self.get_index(move.index) == self.EMPTY, f"Board square {self.coordinates(move.index)} is not empty"
 
         # assigning
         self.set_index(index=move.index, value=move.color)
@@ -107,7 +114,10 @@ class Board:
         # adding 1 to the count of moves
         self.n_moves += 1
 
-        self.history.append(move)
+        # updating the centrality score
+        self.centrality += (1 if move.color == Colors.BLACK else -1) * CENTER_WEIGHTS[move.index] * CENTRAL_COEF
+
+        self.history.append(move.index)
 
         # updating board 'closest moves' attribute
         self._update_closest(move=move)
@@ -124,8 +134,11 @@ class Board:
         # removing 1 to the count of moves
         self.n_moves -= 1
 
+        # updating the centrality score
+        self.centrality -= (1 if move.color == Colors.BLACK else -1) * CENTER_WEIGHTS[move.index] * CENTRAL_COEF
+
         # removing the move from history
-        self.history.remove(move)
+        self.history.remove(move.index)
 
     def _update_closest(self, move: Move) -> None:
         """
@@ -192,48 +205,53 @@ class Board:
         self.n_moves = 0
 
 
-def cache(evaluation_function):
+def cache_hash(board: bytearray, tempo: int) -> tuple:
+    """
+    computes a hash of the board position to be used as a key in the cache
+    """
+    return bytes(board), tempo
+
+
+def cache(engine_name: str):
     """
     decorates the evaluation function, caching the results of the evaluation for a given board position to avoid
     redundant computations
     """
-    # stores the results of the evaluations
-    _cache: dict = dict()
+    def decorator(evaluation_function):
+        _cache: dict = {}
+        _hits = 0
 
-    # number of cache hits
-    _hits: int = 0
+        @wraps(evaluation_function)
+        def wrapper(*args, **kwargs):
+            nonlocal _hits
 
-    def _hash(board: bytearray, tempo: int) -> tuple:
-        """
-        computes a hash of the board position to be used as a key in the cache
-        """
-        return bytes(board), tempo
+            board: bytearray = kwargs["board_bytes"]
+            tempo: int = kwargs["tempo"]
 
-    @wraps(evaluation_function)
-    def wrapper(*args, **kwargs):
-        nonlocal _hits
+            h = cache_hash(board, tempo)
 
-        board: bytearray = kwargs.get('board_bytes')
-        tempo: int = kwargs.get('tempo')
+            if h not in _cache:
+                _cache[h] = evaluation_function(*args, **kwargs)
+            else:
+                _hits += 1
 
-        h = _hash(board, tempo)
+                logging.debug(
+                    "[%s] Cache hit (%d entries, %d hits)",
+                    engine_name or "default",
+                    len(_cache),
+                    _hits,
+                )
 
-        if h not in _cache:
-            score = evaluation_function(*args, **kwargs)
-            _cache[h] = score
-        else:
-            score = _cache[h]
-            _hits += 1
+            return _cache[h]
 
-            logging.debug(f"Cache hit for board position={h[0: 3]}..., score={score}")
+        wrapper.cache = _cache
+        wrapper.cache_hits = lambda: _hits
+        wrapper.cache_size = lambda: len(_cache)
+        wrapper.engine_name = engine_name
 
-        return score
+        return wrapper
 
-    wrapper.cache = _cache
-    wrapper.cache_hits = lambda: _hits
-    wrapper.cache_size = lambda: len(_cache)
-
-    return wrapper
+    return decorator
 
 
 def deterministic_vectors(vector_size: int, n_vectors: int, seed: int) -> list[tuple[int]]:

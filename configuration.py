@@ -2,11 +2,11 @@
     project configuration storing constants & initializing pre-computed values for performance enhancement
 """
 
-from singleton_decorator import singleton
 from profilehooks import timecall
 from typing import Optional
 from enum import IntEnum
 import numpy as np
+import logging
 
 # number of stones to line up to win
 WINNING_LENGTH = 5
@@ -15,7 +15,7 @@ WINNING_LENGTH = 5
 BOARD_SIZE = 15
 
 # Maximum thinking time
-MAX_TIME = 1.5
+MAX_TIME = 0.25
 
 # Using the following variable to bypass the timeout mechanism, for testing purposes only
 BYPASS_TIMEOUT = False
@@ -115,20 +115,27 @@ class Colors(IntEnum):
     WHITE: int = 2
 
 
-@singleton
 class EngineConfig:
     def __init__(self, extra: Optional[dict]):
         """
         engine configuration, including "extra" parameters coming from a specification object
         """
+        extra = extra if extra is not None else {}
+
+        # checking that only the allowed keys are present in the "extra" dictionary
+        for key in extra:
+            assert key in ('depth', 'max_time', 'central_term', 'terminal', )
+
         # maximum engine depth when performing searches
-        self.max_depth: int = ENGINE_DEPTH
+        self.max_depth: int = extra.get('depth', ENGINE_DEPTH)
 
         # maximum thinking time in seconds when performing searches
-        self.max_time: float = MAX_TIME
+        self.max_time: float = extra.get('max_time', MAX_TIME)
 
         # the "extra" attribute can be empty
         self.extra = extra or {}
+
+        logging.debug(f"Built engine configuration correctly")
 
     def get(self, param: str):
         """
@@ -242,8 +249,10 @@ def _compute_pattern_indexation():
         PATTERN_INDEXATION[length] = tuple(segments)
 
 
+CENTER = BOARD_SIZE // 2
+
 # first engine move if engine plays black is set in advance
-FIRST_BLACK_MOVE_INDEX_ENGINE = index(BOARD_SIZE // 2, BOARD_SIZE // 2)
+FIRST_BLACK_MOVE_INDEX_ENGINE = index(CENTER, CENTER)
 
 
 # Base-3 encoding of a pattern string. "01110" -> 0*81+1*27+1*9+1*3+0 = 39.
@@ -277,6 +286,23 @@ def _compute_eval_tables():
         EVAL_TABLES.append((SEG_INDICES[length], SCORE_ARRAY[length]))
 
 
+# defining the weights of each square based on its centrality to score higher more central squares
+CENTER_WEIGHTS = np.empty(BOARD_SIZE * BOARD_SIZE, dtype=np.int16)
+
+# the coefficient used to multiply the centrality weight of a square to make it more impactful in the evaluation
+CENTRAL_COEF = 100
+
+# Centrality coefficient in the evaluation is accounted for less and less, as the game goes on
+CENTRAL_TERM_PHASE = 25
+
+
+def _compute_centrality():
+    for i in range(BOARD_SIZE):
+        for j in range(BOARD_SIZE):
+            dist = abs(i - CENTER) + abs(j - CENTER)
+            CENTER_WEIGHTS[index(i, j)] = 2 * CENTER - dist
+
+
 @timecall
 def initialize_config():
     # pre-computing neighbors ahead of plays
@@ -289,6 +315,9 @@ def initialize_config():
     _compute_pattern_indexation()
 
     _compute_eval_tables()
+
+    # pre-computing centrality weights for each square
+    _compute_centrality()
 
 
 initialize_config()
