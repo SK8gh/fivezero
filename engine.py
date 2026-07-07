@@ -1,8 +1,10 @@
 """
     gomoku, Puissance 5 engine, named after AlphaZero, the famous Go engine developed by Google DeepMind
 """
+
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, List
+from dataclasses import dataclass, field
 from utils import Board, Move, cache
 from numba import njit
 import numpy as np
@@ -10,21 +12,36 @@ import threading
 import logging
 
 from configuration import (
+    CENTRAL_TERM_PHASE,
     PATTERN_INDEXATION,
     BYPASS_TIMEOUT,
-    TEMPO_FACTOR,
+    CENTRAL_COEF,
     EngineConfig,
+    TEMPO_FACTOR,
     EVAL_TABLES,
     NEIGHBORS,
+    FIVE
 )
+
+
+@dataclass
+class EngineSpec:
+    """
+    defines a selectable engine version in the UI
+    """
+    id: str
+    blurb: str
+    params: dict = field(default_factory=dict)
 
 
 class FiveZeroEngine:
     """
         Main engine class
     """
-    def __init__(self, engine_color: int):
-        self.config: EngineConfig = EngineConfig()
+    def __init__(self, engine_color: int, spec: Optional[EngineSpec]):
+        self.config: EngineConfig = EngineConfig(
+            extra=self._manage_spec(spec=spec)
+        )
 
         # engine plays the following color that will be set when joining a game
         self.color = engine_color
@@ -32,11 +49,22 @@ class FiveZeroEngine:
         # board representation
         self.board = Board()
 
-        # warming-up the evaluation
+        # decorating the evaluation method at inception of the engine object
+        self.evaluate = cache(spec.id if spec is not None else None)(self.evaluate)
+
+        # jit-warmup of the evaluation
         self.evaluate(board_bytes=self.board.board, tempo=self.color)
 
         if BYPASS_TIMEOUT:
             logging.warning(f"Engine timeout bypass is enabled")
+
+    @staticmethod
+    def _manage_spec(spec: Optional[EngineSpec]) -> dict:
+        """
+        treating the engine specifications passed as argument to declare a dictionary that will be used throughout the
+        engine as a complementary configuration parameter
+        """
+        return spec.params if spec is not None else None
 
     def _ident_pattern(self, pattern: str, color: int, board_bytes: Optional[bytearray]) -> List[Tuple[int]]:
         """
@@ -85,7 +113,7 @@ class FiveZeroEngine:
         # can't exceed the maximum engine recursion parameter
         while depth <= self.config.max_depth:
             try:
-                logging.info(f"Searching depth {depth}")
+                logging.debug(f"Searching depth {depth}")
 
                 best_move = self._search_depth(
                     search_deadline=search_deadline,
@@ -162,6 +190,19 @@ class FiveZeroEngine:
         if self._timeout(search_deadline=search_deadline):
             # engine thinking time exceeded
             raise TimeoutError()
+
+        # detecting winning moves
+        if self.config.get('terminal'):
+            board_np = np.frombuffer(board.board, dtype=np.uint8)
+            opp = 1 if self.color == 2 else 2
+
+            if self._has_five(board_np, self.color):
+                # detecting winning moves, assigning a better evaluation to the closest wins
+                return FIVE - (self.config.max_depth - depth)
+
+            if self._has_five(board_np, opp):
+                # detecting losing moves, assigning a better evaluation to the furthest losses
+                return -(FIVE - (self.config.max_depth - depth))
 
         if depth == 0 or not board.closest_moves:
             # side to move at this leaf
@@ -248,10 +289,9 @@ class FiveZeroEngine:
         # caution, if the bypass timeout global variable is set to true, the engine will never time out
         return now >= search_deadline and not BYPASS_TIMEOUT
 
-    @cache
     def evaluate(self, board_bytes: bytearray, tempo: int) -> int:
         """
-        Tempo-aware board scoring, JIT-accelerated.
+        tempo-aware board scoring, JIT-accelerated.
 
         Same scoring semantics as before (sum of pattern scores, engine positive /
         opponent negative, side-to-move amplified by TEMPO_FACTOR), but:
@@ -270,18 +310,24 @@ class FiveZeroEngine:
         # zero-copy view over the bytearray buffer
         board_np = np.frombuffer(board_bytes, dtype=np.uint8)
 
-        total = 0.0
+        score = 0.0
+
         for seg_idx, score_table in EVAL_TABLES:
-            total += _eval_length(
-                board_np,
-                seg_idx,
-                score_table,
-                self.color,
-                opp,
-                engine_factor,
-                opp_factor
+            score += _eval_length(
+                board_np=board_np,
+                seg_idx=seg_idx,
+                score_table=score_table,
+                engine_color=self.color,
+                engine_factor=engine_factor,
+                opp_factor=opp_factor
             )
-        return int(total)
+
+        # if model configuration allows
+        if self.config.extra.get('central_term'):
+            # the first term decreases the impact of the centrality term as the game progresses
+            score += max(0.0, 1 - self.board.n_moves / CENTRAL_TERM_PHASE) * self.board.centrality * CENTRAL_COEF
+
+        return int(score)
 
 
 @njit(cache=True, nogil=True)
@@ -290,7 +336,6 @@ def _eval_length(
         seg_idx,
         score_table,
         engine_color,
-        opp,
         engine_factor,
         opp_factor
 ):

@@ -7,8 +7,8 @@ from time import perf_counter
 import unittest
 
 # module imports
-from utils import Board, Move, deterministic_vectors
-from engine import FiveZeroEngine
+from utils import Board, Move, deterministic_vectors, cache_hash
+from engine import FiveZeroEngine, EngineSpec
 
 
 class TestEnginePatternIdent(unittest.TestCase):
@@ -20,7 +20,7 @@ class TestEnginePatternIdent(unittest.TestCase):
         testing various patterns as test cases
         """
         # engine plays black
-        engine = FiveZeroEngine(engine_color=1)
+        engine = FiveZeroEngine(engine_color=1, spec=None)
 
         board = engine.board
 
@@ -155,23 +155,99 @@ class TestEnginePatternIdent(unittest.TestCase):
                 self.assertEqual(result, coordinates)
 
 
-class TestBoardCache(unittest.TestCase):
+class TestEvaluationCache(unittest.TestCase):
     """
     testing the caching mechanism of the pattern identification algorithm
     """
-    def test_cache(self):
+    def test_cache_separation(self):
         """
-        testing if the caching mechanisms of board evaluation is correctly implemented
+        testing if two different engines are hitting two different caches when calling their evaluation function
 
-        - creating boards, calling the evaluation on the same boards to test the cache
+        - creating two engine objects and asserting that their evaluation cache is not the same object
         """
-        pass
+        # creating engine objects
+        e1 = FiveZeroEngine(engine_color=1, spec=None)
+        e2 = FiveZeroEngine(engine_color=2, spec=None)
 
-    def test_measure_cache_usage(self):
-        """
+        c1 = e1.evaluate.cache
+        c2 = e2.evaluate.cache
 
+        assert c1 is not c2
+
+    def test_cache_call(self):
         """
-        pass
+        testing that the evaluation cache is correctly used
+
+        - creating an engine object, performing moves on its board, evaluating the position and checking that the cache
+          is in the expected state
+
+        - evaluating again to check that the cache is being hit as expected
+        """
+        version = "1.0.0"
+
+        # engine specification object
+        spec = EngineSpec(
+            id=version,
+            blurb="PROD"
+        )
+
+        # creating engine object
+        engine = FiveZeroEngine(
+            engine_color=1,
+            spec=spec
+        )
+
+        # performing a few moves
+        moves = (
+            Move(index=Board.index(7, 7), color=1),
+            Move(index=Board.index(7, 8), color=2),
+            Move(index=Board.index(8, 7), color=1),
+            Move(index=Board.index(8, 8), color=2),
+            Move(index=Board.index(7, 11), color=1),
+            Move(index=Board.index(7, 12), color=2),
+        )
+
+        for move in moves:
+            engine.board.move(move=move)
+
+        # position evaluation
+        r1 = engine.evaluate(board_bytes=engine.board.board, tempo=1)
+
+        # cache forensics
+        cache = engine.evaluate.cache
+        hits = engine.evaluate.cache_hits()
+        cache_size = engine.evaluate.cache_size()
+        engine_name = engine.evaluate.engine_name
+
+        # checking that the engine name is assigned when decorating the method
+        self.assertEqual(engine_name, spec.id)
+
+        # checking that the evaluation was indeed cached
+        self.assertIn(
+            cache_hash(board=engine.board.board, tempo=1),  # evaluation is located using this key
+            cache
+        )
+
+        # no hits yet
+        self.assertEqual(hits, 0)
+
+        # cache now contains the empty position evaluation (done at init to JIT-warm the evaluation)
+        self.assertEqual(cache_size, 2)
+
+        # calling the evaluation on the same board to make sure the cache is being used
+        r2 = engine.evaluate(board_bytes=engine.board.board, tempo=1)
+
+        # checking that the two evaluations led to the same result
+        self.assertEqual(r1, r2)
+
+        hits = engine.evaluate.cache_hits()
+        cache_size = engine.evaluate.cache_size()
+
+        # 1 hit must have happened now
+        self.assertEqual(hits, 1)
+
+        # still the same cache size
+        self.assertEqual(cache_size, 2)
 
 
 class TestEvaluationPerformance(unittest.TestCase):
@@ -180,10 +256,13 @@ class TestEvaluationPerformance(unittest.TestCase):
     """
     def test_evaluation_speed(self):
         # engine object
-        engine = FiveZeroEngine(engine_color=1)
+        engine = FiveZeroEngine(
+            engine_color=1,
+            spec=None
+        )
 
         # generating n_vectors random (fixed seed, deterministic values) sequences of n_moves
-        n_vectors, n_moves = 1000, 10
+        n_vectors, n_moves = 5000, 10
 
         # using my gf birthdate as seed <3
         seed = 30111992
@@ -223,4 +302,4 @@ class TestEvaluationPerformance(unittest.TestCase):
         assert engine.evaluate.cache_size() == n_vectors + 1
 
         # no hits should happen
-        assert engine.evaluate.cache_hits() == 1
+        assert engine.evaluate.cache_hits() == 0
