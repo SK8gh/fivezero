@@ -10,18 +10,21 @@ from numba import njit
 import numpy as np
 import threading
 import logging
+import random
 
 from configuration import (
-    CENTRAL_TERM_PHASE,
     PATTERN_INDEXATION,
     BYPASS_TIMEOUT,
-    CENTRAL_COEF,
     EngineConfig,
     TEMPO_FACTOR,
     EVAL_TABLES,
-    NEIGHBORS,
-    FIVE
+    BOARD_SIZE,
+    NEIGHBOURS
 )
+
+
+# the four axes a pattern can run along (used by the move-ordering scorer)
+_ORDER_DIRS = np.array([(0, 1), (1, 0), (1, 1), (1, -1)], dtype=np.int64)
 
 
 @dataclass
@@ -46,17 +49,40 @@ class FiveZeroEngine:
         # engine plays the following color that will be set when joining a game
         self.color = engine_color
 
+        # whether candidate moves are ordered by a local threat score before
+        # the alpha-beta descent (A/B-testable). Off -> old geometric ordering.
+        self.ordering = bool(self.config.get('ordering'))
+
         # board representation
         self.board = Board()
 
         # decorating the evaluation method at inception of the engine object
         self.evaluate = cache(spec.id if spec is not None else None)(self.evaluate)
 
-        # jit-warmup of the evaluation
-        self.evaluate(board_bytes=self.board.board, tempo=self.color)
+        # global jit-warmup
+        self._jit_warmup()
 
         if BYPASS_TIMEOUT:
             logging.warning(f"Engine timeout bypass is enabled")
+
+    def _jit_warmup(self):
+        """
+        when using jit, the function must run once to compile the jitted function once and avoid it running slowly later
+        """
+        logging.debug(f"Launching just-in-time (jit) warmup")
+
+        # jit-warmup of the evaluation
+        self.evaluate(board_bytes=self.board.board, tempo=self.color)
+
+        # jit-warmup of the move-ordering scorer
+        _order_indices(
+            np.frombuffer(self.board.board, dtype=np.uint8),
+            np.fromiter(self.board.closest_moves, dtype=np.int64,
+                        count=len(self.board.closest_moves)),
+            self.color
+        )
+
+        logging.debug(f"Done warming up jitted functions")
 
     @staticmethod
     def _manage_spec(spec: Optional[EngineSpec]) -> dict:
@@ -100,6 +126,27 @@ class FiveZeroEngine:
 
         return results
 
+    def _order_moves(self, board: Board, depth: int) -> list[int]:
+        """
+        returns the candidate moves ordered best-first.
+
+        With ordering enabled (and enough depth left for pruning to pay off),
+        moves are ranked by a fast local threat score: for each of the 4 axes
+        through the square, how far it extends the engine's own line (offense)
+        and how far it touches the opponent's line (defense). Forcing moves
+        (fours, then threes) come first, which is what makes alpha-beta cut
+        early. Otherwise we fall back to the cheap geometric ordering.
+        """
+        moves = board.closest_moves
+
+        if not self.ordering or depth < 2:
+            return sorted(moves, key=lambda idx: len(NEIGHBOURS[idx]), reverse=True)
+
+        board_np = np.frombuffer(board.board, dtype=np.uint8)
+        cands = np.fromiter(moves, dtype=np.int64, count=len(moves))
+        ordered = _order_indices(board_np, cands, self.color)
+        return [int(i) for i in ordered]
+
     def search(self, move_timestamp: datetime) -> Move:
         """
         TODO: explain
@@ -132,14 +179,13 @@ class FiveZeroEngine:
         """
         TODO: explain
         """
-        best_move = None
         best_score = float("-inf")
 
-        candidate_moves = sorted(
-            self.board.closest_moves,
-            key=lambda idx: len(NEIGHBORS[idx]),
-            reverse=True
-        )
+        # all root moves that reach the best score so far; one is picked at
+        # random at the end (see below)
+        best_moves: list[Move] = []
+
+        candidate_moves = self._order_moves(self.board, depth)
 
         # raising if no candidate moves were found...
         assert len(candidate_moves) > 0
@@ -169,9 +215,17 @@ class FiveZeroEngine:
 
             if score > best_score:
                 best_score = score
-                best_move = move
+                best_moves = [move]
 
-        return best_move
+            elif score == best_score:
+                best_moves.append(move)
+
+        # Pick uniformly at random among all equally-best moves. This is
+        # strength-neutral (every choice has the same evaluation) but makes
+        # otherwise-identical games diverge -- without it two engines replay the
+        # exact same game every time, which makes A/B benchmarking meaningless.
+        # Seed `random` once at program start if you want reproducible runs.
+        return random.choice(best_moves) if best_moves else None
 
     def minimax(
         self,
@@ -191,19 +245,6 @@ class FiveZeroEngine:
             # engine thinking time exceeded
             raise TimeoutError()
 
-        # detecting winning moves
-        if self.config.get('terminal'):
-            board_np = np.frombuffer(board.board, dtype=np.uint8)
-            opp = 1 if self.color == 2 else 2
-
-            if self._has_five(board_np, self.color):
-                # detecting winning moves, assigning a better evaluation to the closest wins
-                return FIVE - (self.config.max_depth - depth)
-
-            if self._has_five(board_np, opp):
-                # detecting losing moves, assigning a better evaluation to the furthest losses
-                return -(FIVE - (self.config.max_depth - depth))
-
         if depth == 0 or not board.closest_moves:
             # side to move at this leaf
             opp = 1 if self.color == 2 else 2
@@ -211,11 +252,7 @@ class FiveZeroEngine:
 
             return self.evaluate(board_bytes=board.board, tempo=tempo)
 
-        moves = sorted(
-            board.closest_moves,
-            key=lambda idx: len(NEIGHBORS[idx]),
-            reverse=True
-        )
+        moves = self._order_moves(board, depth)
 
         if maximizing:
             value = float("-inf")
@@ -322,12 +359,78 @@ class FiveZeroEngine:
                 opp_factor=opp_factor
             )
 
-        # if model configuration allows
-        if self.config.extra.get('central_term'):
-            # the first term decreases the impact of the centrality term as the game progresses
-            score += max(0.0, 1 - self.board.n_moves / CENTRAL_TERM_PHASE) * self.board.centrality * CENTRAL_COEF
-
         return int(score)
+
+
+@njit(cache=True, nogil=True)
+def _line_len(board_np, x, y, dx, dy, color):
+    """
+    number of consecutive `color` stones adjacent to (x, y) along the (dx, dy)
+    axis, counting BOTH directions -- i.e. how long a run a stone placed at
+    (x, y) would connect on that axis (excluding the placed stone itself).
+    """
+    n = 0
+    nx = x + dx
+    ny = y + dy
+    while 0 <= nx < BOARD_SIZE and 0 <= ny < BOARD_SIZE and board_np[nx * BOARD_SIZE + ny] == color:
+        n += 1
+        nx += dx
+        ny += dy
+    nx = x - dx
+    ny = y - dy
+    while 0 <= nx < BOARD_SIZE and 0 <= ny < BOARD_SIZE and board_np[nx * BOARD_SIZE + ny] == color:
+        n += 1
+        nx -= dx
+        ny -= dy
+    return n
+
+
+@njit(cache=True, nogil=True)
+def _threat(run_len):
+    """cheap super-linear weight: longer runs are disproportionately urgent."""
+    if run_len >= 5:
+        return 1000000.0
+
+    elif run_len == 4:
+        return 10000.0
+
+    elif run_len == 3:
+        return 1000.0
+
+    elif run_len == 2:
+        return 100.0
+
+    else:
+        return 1.0
+
+
+@njit(cache=True, nogil=True)
+def _order_indices(board_np, cands, engine_color):
+    """
+    Score each candidate square by the local threat a stone there would create
+    (own lines) and neutralise (opponent lines), summed over the 4 axes, then
+    return the candidate indices sorted best-first. Runs as native code so it's
+    cheap enough to call at every ordered node.
+    """
+    opp = 1 if engine_color == 2 else 2
+    m = cands.shape[0]
+    scores = np.empty(m, dtype=np.float64)
+
+    for k in range(m):
+        c = cands[k]
+        x = c // BOARD_SIZE
+        y = c % BOARD_SIZE
+        s = 0.0
+        for d in range(4):
+            dx = _ORDER_DIRS[d, 0]
+            dy = _ORDER_DIRS[d, 1]
+            eng_run = _line_len(board_np, x, y, dx, dy, engine_color) + 1   # + placed stone
+            opp_run = _line_len(board_np, x, y, dx, dy, opp) + 1
+            s += _threat(eng_run) + _threat(opp_run)
+        scores[k] = s
+
+    order = np.argsort(-scores)      # descending
+    return cands[order]
 
 
 @njit(cache=True, nogil=True)

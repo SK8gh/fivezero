@@ -7,7 +7,7 @@ from time import perf_counter
 import unittest
 
 # module imports
-from utils import Board, Move, deterministic_vectors, cache_hash
+from utils import Board, Move, deterministic_vectors, cache_key
 from engine import FiveZeroEngine, EngineSpec
 
 
@@ -224,7 +224,7 @@ class TestEvaluationCache(unittest.TestCase):
 
         # checking that the evaluation was indeed cached
         self.assertIn(
-            cache_hash(board=engine.board.board, tempo=1),  # evaluation is located using this key
+            cache_key(board=engine.board.board, tempo=1),  # evaluation is located using this key
             cache
         )
 
@@ -262,7 +262,7 @@ class TestEvaluationPerformance(unittest.TestCase):
         )
 
         # generating n_vectors random (fixed seed, deterministic values) sequences of n_moves
-        n_vectors, n_moves = 5000, 10
+        n_vectors, n_moves = 30000, 10
 
         # using my gf birthdate as seed <3
         seed = 30111992
@@ -277,13 +277,19 @@ class TestEvaluationPerformance(unittest.TestCase):
 
         start = perf_counter()
 
-        for move_sequence in move_sequences:
+        for seq_n, move_sequence in enumerate(move_sequences):
             # clearing the board
             engine.board.clear()
 
             # performing individual moves only
             for j, index in enumerate(set(move_sequence)):
-                engine.board.move(Move(index, color=j % 2 + 1))
+                try:
+                    engine.board.move(
+                        Move(index=index, color=j % 2 + 1)
+                    )
+                except Exception as e:
+                    print(seq_n, j)
+                    raise e
 
             engine.evaluate(
                 board_bytes=engine.board.board,

@@ -4,11 +4,13 @@
 
 import unittest
 
+import configuration
 from utils import Board, Move
 
 from configuration import (
+    FIRST_BLACK_MOVE_INDEX_ENGINE,
     BOARD_SIZE,
-    NEIGHBORS
+    NEIGHBOURS
 )
 
 
@@ -16,7 +18,7 @@ class TestFork(unittest.TestCase):
     """
     testing the fork method that create a new instance of a board and makes a move
     """
-    def test_fork_ids(self):
+    def test_fork(self):
         """
         creating a board, making a fork move
 
@@ -32,7 +34,7 @@ class TestFork(unittest.TestCase):
         self.assertIsNot(board, board_fork)
 
         # asserting that board attributes are different
-        for attr in ('board', 'closest_moves', 'n_moves'):
+        for attr in ('board', 'closest_moves', 'n_moves', 'history', ):
             self.assertIsNot(getattr(board, attr), getattr(board_fork, attr))
 
     def test_fork_undo(self):
@@ -50,19 +52,15 @@ class TestFork(unittest.TestCase):
         # Black stone placed on the top right of the board
         move = Move(index=BOARD_SIZE - 1, color=1)
 
+        # unique fingerprint identifying the board object
+        fingerprint_before = board.fingerprint()
+
         # fork-moving
         board_fork = board.fork_move(move=move)
 
         board_fork.undo_move(move=move)
 
-        # asserting that the two boards are not the same object
-        self.assertIsNot(board, board_fork)
-
-        # board states must be equal
-        self.assertEqual(board, board_fork)
-
-        # number of moves should be the same (not tested in ==)
-        self.assertEqual(board.n_moves, board_fork.n_moves)
+        assert board.fingerprint() == fingerprint_before
 
 
 class TestBoardMoves(unittest.TestCase):
@@ -211,6 +209,135 @@ class TestBoardMoves(unittest.TestCase):
 
         self.assertEqual(moves, board.history)
 
+    def test_undo(self):
+        """
+        creating a board, making a move and undoing it
+
+        checking that the two boards:
+            - are not the same object
+            - have the same configuration
+            - have the same number of moves
+        """
+        # empty board
+        board = Board()
+
+        # performing the first move
+        board.move(
+            move=Move(
+                index=FIRST_BLACK_MOVE_INDEX_ENGINE,
+                color=1  # black always play first
+            )
+        )
+
+        # Black stone placed on the top right of the board
+        index = BOARD_SIZE - 1
+
+        move = Move(index=index, color=2)
+
+        # unique fingerprint identifying the board object
+        fingerprint_before = board.fingerprint()
+
+        board.move(move=move)
+
+        board.undo_move(move=move)
+
+        fingerprint_after = board.fingerprint()
+
+        for key in fingerprint_before:
+            v_a, v_b = fingerprint_before[key], fingerprint_after[key]
+
+            self.assertEqual(v_a, v_b)
+
+    def test_undo_connected(self):
+        """
+        creating a board, making a move and undoing it. The undone move is "close" to already performed move to
+        test extra cases of the _undo_closest method of the Board object
+
+        checking that the two boards:
+            - are not the same object
+            - have the same configuration
+            - have the same number of moves
+        """
+        # empty board
+        board = Board()
+
+        # performing the first move
+        board.move(
+            move=Move(
+                index=FIRST_BLACK_MOVE_INDEX_ENGINE,
+                color=1  # black always play first
+            )
+        )
+
+        # Black stone placed on the top right of the board
+        index = FIRST_BLACK_MOVE_INDEX_ENGINE + 1
+
+        move = Move(index=index, color=2)
+
+        # unique fingerprint identifying the board object
+        fingerprint_before = board.fingerprint()
+
+        board.move(move=move)
+
+        board.undo_move(move=move)
+
+        fingerprint_after = board.fingerprint()
+
+        for key in fingerprint_before:
+            v_a, v_b = fingerprint_before[key], fingerprint_after[key]
+
+            self.assertEqual(v_a, v_b)
+
+    def test_undo_empty(self):
+        """
+        creating a board, making a single move and undoing it. This function tests the special case where the board is
+        empty again in the _undo_closest method of the Board object
+
+        checking that the two boards:
+            - are not the same object
+            - have the same configuration
+            - have the same number of moves
+        """
+        # empty board
+        board = Board()
+
+        # performing the first move and undoing it
+        move = Move(
+            index=FIRST_BLACK_MOVE_INDEX_ENGINE,
+            color=1  # black always play first
+        )
+
+        # unique fingerprint identifying the board object
+        fingerprint_before = board.fingerprint()
+
+        board.move(
+            move=move
+        )
+
+        board.undo_move(move=move)
+
+        fingerprint_after = board.fingerprint()
+
+        for key in fingerprint_before:
+            v_a, v_b = fingerprint_before[key], fingerprint_after[key]
+
+            self.assertEqual(v_a, v_b,  f"fingerprints do not match for key '{key}'")
+
+    def test_moves_1(self):
+        """
+        this case yielded an exception because of the neighbours count
+        """
+        board = Board()
+
+        for j, index in enumerate((139, 115, 143, 39, 207, 91, 168, 151, 100, 13)):
+            try:
+                board.move(
+                    Move(index=index, color=j % 2 + 1)
+                )
+
+            except (Exception, ) as e:
+                self.fail(f"Moving j={j}, index={index} is not supposed to raise an exception: {e}")
+
 
 class TestPlayableMoves(unittest.TestCase):
     """
@@ -265,7 +392,7 @@ class TestPlayableMoves(unittest.TestCase):
                 index = board.index(*coordinates)
 
                 # expected neighbors must be converted to indexes
-                expected_neighbors = {board.coordinates(n) for n in NEIGHBORS[index]}
+                expected_neighbors = {board.coordinates(n) for n in NEIGHBOURS[index]}
 
                 self.assertEqual(neighbors, expected_neighbors)
 
@@ -289,6 +416,41 @@ class TestClearing(unittest.TestCase):
         board.clear()
 
         self.assertEqual(board, Board())
+
+
+class TestClone(unittest.TestCase):
+    """
+    testing the cloning mechanism of the board class
+    """
+    def test_equality(self):
+        """
+        b = a.clone() testing that a equals b, and that the copy is a deepcopy
+        """
+        # new empty board object
+        a = Board()
+
+        # performing some moves
+        moves = (
+            Move(index=0, color=1),
+            Move(index=1, color=2),
+            Move(index=2, color=1),
+        )
+        for move in moves:
+            a.move(move=move)
+
+        b = Board.clone(a)
+
+        # "Board" implements __eq__
+        self.assertEqual(a, b)
+
+        # other attributes must be equal too
+        self.assertEqual(a.history, b.history)
+        self.assertEqual(a.n_moves, b.n_moves)
+
+        # testing that attributes are not the same object
+        self.assertIsNot(a.board, b.board)
+        self.assertIsNot(a.history, b.history)
+        self.assertIsNot(a.board, b.board)
 
 
 if __name__ == "__main__":

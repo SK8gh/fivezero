@@ -8,11 +8,8 @@ from configuration import (
     FIRST_BLACK_MOVE_INDEX_ENGINE,
     COORDINATE_TO_INDEX,
     INDEX_TO_COORDINATE,
-    CENTER_WEIGHTS,
-    CENTRAL_COEF,
     BOARD_SIZE,
-    NEIGHBORS,
-    Colors
+    NEIGHBOURS
 )
 
 
@@ -64,8 +61,11 @@ class Board:
         default_factory=lambda: []
     )
 
-    # centrality score of the board, used for evaluation
-    centrality: int = 0
+    # per-square count of occupied neighbours; a square is a 'closest move'
+    # iff it is empty and this count is > 0
+    neighbour_count: bytearray = field(
+        default_factory=lambda: bytearray(BOARD_SIZE * BOARD_SIZE)
+    )
 
     def __eq__(self, other: "Board"):
         """
@@ -114,9 +114,6 @@ class Board:
         # adding 1 to the count of moves
         self.n_moves += 1
 
-        # updating the centrality score
-        self.centrality += (1 if move.color == Colors.BLACK else -1) * CENTER_WEIGHTS[move.index] * CENTRAL_COEF
-
         self.history.append(move.index)
 
         # updating board 'closest moves' attribute
@@ -126,35 +123,60 @@ class Board:
         """
         undoing move
         """
-        assert self.get_index(move.index) != self.EMPTY
+        index = move.index
+
+        assert self.get_index(index) != self.EMPTY
 
         # undoing move
-        self.set_index(index=move.index, value=self.EMPTY)
+        self.set_index(index=index, value=self.EMPTY)
 
         # removing 1 to the count of moves
         self.n_moves -= 1
 
-        # updating the centrality score
-        self.centrality -= (1 if move.color == Colors.BLACK else -1) * CENTER_WEIGHTS[move.index] * CENTRAL_COEF
-
         # removing the move from history
-        self.history.remove(move.index)
+        self.history.remove(index)
+
+        # updating the closest moves attribute
+        self._undo_closest(index=index)
+
+    def _undo_closest(self, index: int) -> None:
+        """
+        reverses _update_closest in O(K): decrement the occupied-neighbour count of each neighbour, and drop it from
+        closest_moves only when its count hits 0
+        """
+        for n in NEIGHBOURS[index]:
+            self.neighbour_count[n] -= 1
+
+            # lost its last adjacent stone -> no longer playable
+            if self.neighbour_count[n] == 0 and self.get_index(n) == self.EMPTY:
+                self.closest_moves.discard(n)
+
+        # the removed square is empty again: a candidate iff it still touches a stone
+        if self.neighbour_count[index] > 0:
+            self.closest_moves.add(index)
+        else:
+            self.closest_moves.discard(index)
+
+        # fully empty board: restoring the opening seed
+        if not self.n_moves:
+            self.closest_moves = {FIRST_BLACK_MOVE_INDEX_ENGINE}
 
     def _update_closest(self, move: Move) -> None:
         """
         updating the closest "moves" attribute, storing the "playable" moves that are at a maximum distance of a placed
-            stone on the board
+        stone on the board
         """
-        neighbors = NEIGHBORS[move.index]
+        index = move.index
 
-        # correcting the neighbors with allowed values (empty squares only)
-        allowed = set((n for n in neighbors if self.get_index(n) == self.EMPTY))
+        for n in NEIGHBOURS[index]:
+            self.neighbour_count[n] += 1
 
-        # adding new closest (possible) moves
-        self.closest_moves.update(allowed)
+            # any empty neighbour now touches a stone -> it's playable
+            if self.get_index(n) == self.EMPTY:
+                self.closest_moves.add(n)
 
-        # removing the move being played from possible moves
-        self.closest_moves.discard(move.index)
+        # the square just played is no longer a candidate
+        self.closest_moves.discard(index)
 
     @staticmethod
     def clone(instance: "Board") -> "Board":
@@ -165,7 +187,8 @@ class Board:
             closest_moves=instance.closest_moves.copy(),
             history=instance.history.copy(),
             board=instance.board.copy(),
-            n_moves=instance.n_moves
+            n_moves=instance.n_moves,
+            neighbour_count=instance.neighbour_count.copy()
         )
 
     def fork_move(self, move: Move) -> "Board":
@@ -199,13 +222,27 @@ class Board:
         # does not recreate a new bytearray object
         self.board[:] = b"\x00" * len(self.board)
 
+        # resetting the neighbour counter too, otherwise it accumulates across reuses
+        self.neighbour_count[:] = b"\x00" * len(self.neighbour_count)
+
         # clearing allowed moves & move history
         self.closest_moves.clear(), self.history.clear()
 
         self.n_moves = 0
 
+    def fingerprint(self) -> dict:
+        """
+        board fingerprint, unique for unique boards
+        """
+        return {
+            'board': bytes(self.board),
+            'closest': frozenset(self.closest_moves),
+            'history': tuple(self.history),
+            'n_moves': self.n_moves
+        }
 
-def cache_hash(board: bytearray, tempo: int) -> tuple:
+
+def cache_key(board: bytearray, tempo: int) -> tuple:
     """
     computes a hash of the board position to be used as a key in the cache
     """
@@ -222,16 +259,16 @@ def cache(engine_name: str):
         _hits = 0
 
         @wraps(evaluation_function)
-        def wrapper(*args, **kwargs):
+        def wrapper(board_bytes: bytearray, tempo: int):
             nonlocal _hits
 
-            board: bytearray = kwargs["board_bytes"]
-            tempo: int = kwargs["tempo"]
-
-            h = cache_hash(board, tempo)
+            h = cache_key(board_bytes, tempo)
 
             if h not in _cache:
-                _cache[h] = evaluation_function(*args, **kwargs)
+                _cache[h] = evaluation_function(
+                    board_bytes=board_bytes,
+                    tempo=tempo
+                )
             else:
                 _hits += 1
 

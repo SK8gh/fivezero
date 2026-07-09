@@ -234,7 +234,12 @@ class App:
             return
 
         winner = self.game.winner if self.game.winner in (BLACK, WHITE) else None
+
+        # records 'black_is_a' before .record swaps the colors
+        black_is_a = self.arena.black_is_a
         self.arena.record(winner)
+
+        self._log_game(winner, black_is_a)
 
         if self.arena.finished:
             self._arena_next_at = None
@@ -296,8 +301,10 @@ class App:
             # let a focused text field consume digits / backspace first
             if self.ava_menu.handle_key(event):
                 return
+
             if key == pygame.K_q:
                 self.running = False
+
             elif key in (pygame.K_ESCAPE, pygame.K_m):
                 self.state = "menu"
             return
@@ -320,8 +327,9 @@ class App:
                 # restart the whole series with the same settings
                 a = self.arena
                 self.start_arena(a.spec_a, a.spec_b, a.time_ms, a.total_games)
+
             else:
-                # restart the same matchup
+                # restart the same match-up
                 self.start_game(self.mode, self.human_color)
 
     def run(self) -> None:
@@ -340,19 +348,25 @@ class App:
 
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     pos = self._to_logical(event.pos)
+
                     if self.state == "menu":
                         self._handle_menu_click(pos)
+
                     elif self.state == "ava_select":
                         self._handle_ava_select_click(pos)
+
                     else:
                         self._handle_game_click(pos)
 
             if self.state == "game":
                 self._collect_ai()
                 self._maybe_run_ai()
+
                 if self.arena is not None:
                     self._advance_arena()
+
                 self._draw_game(mouse)
+
             elif self.state == "ava_select":
                 ui.draw_ava_select(self.screen, self.fonts, self.ava_menu, mouse)
             else:
@@ -420,6 +434,27 @@ class App:
             return "Draw"
 
         return "Black to move" if g.current == BLACK else "White to move"
+
+    def _log_game(self, winner_color, black_is_a: bool) -> None:
+        """
+        logs one line describing the finished game (no file, just logging).
+        """
+        arena = self.arena
+        black_id = arena.spec_a.id if black_is_a else arena.spec_b.id
+        white_id = arena.spec_b.id if black_is_a else arena.spec_a.id
+
+        if winner_color is None:
+            winner, winner_id = "draw", "-"
+        elif winner_color == BLACK:
+            winner, winner_id = "black", black_id
+        else:
+            winner, winner_id = "white", white_id
+
+        logging.info(
+            "Game %d: %s wins (black=%s, white=%s) | score %s %d-%d-%d %s",
+            arena.games_played, winner_id, black_id, white_id,
+            arena.spec_a.id, arena.wins_a, arena.draws, arena.wins_b, arena.spec_b.id,
+        )
 
 
 if __name__ == "__main__":

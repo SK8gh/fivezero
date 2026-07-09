@@ -14,8 +14,8 @@ WINNING_LENGTH = 5
 # Game board size
 BOARD_SIZE = 15
 
-# Maximum thinking time
-MAX_TIME = 0.25
+# Maximum thinking time (ms)
+MAX_TIME = 1500  # prod version
 
 # Using the following variable to bypass the timeout mechanism, for testing purposes only
 BYPASS_TIMEOUT = False
@@ -24,7 +24,7 @@ BYPASS_TIMEOUT = False
 MOVE_MAX_DISTANCE = 2
 
 # holds the neighbors of each index representing a square
-NEIGHBORS = {index: set() for index in range(BOARD_SIZE * BOARD_SIZE)}
+NEIGHBOURS = {index: set() for index in range(BOARD_SIZE * BOARD_SIZE)}
 
 # Maximum number of moves to look ahead for
 ENGINE_DEPTH = 4
@@ -124,13 +124,13 @@ class EngineConfig:
 
         # checking that only the allowed keys are present in the "extra" dictionary
         for key in extra:
-            assert key in ('depth', 'max_time', 'central_term', 'terminal', )
+            assert key in ('depth', 'max_time', 'ordering', )
 
         # maximum engine depth when performing searches
         self.max_depth: int = extra.get('depth', ENGINE_DEPTH)
 
         # maximum thinking time in seconds when performing searches
-        self.max_time: float = extra.get('max_time', MAX_TIME)
+        self.max_time: float = extra.get('max_time', MAX_TIME / 1000)  # milliseconds
 
         # the "extra" attribute can be empty
         self.extra = extra or {}
@@ -202,7 +202,7 @@ def _compute_neighbors():
         index_neighbors = _compute_square_neighbors(row=row, column=column)
 
         for neighbor in index_neighbors:
-            NEIGHBORS[index].add(neighbor)
+            NEIGHBOURS[index].add(neighbor)
 
 
 def _compute_pattern_indexation():
@@ -290,10 +290,10 @@ def _compute_eval_tables():
 CENTER_WEIGHTS = np.empty(BOARD_SIZE * BOARD_SIZE, dtype=np.int16)
 
 # the coefficient used to multiply the centrality weight of a square to make it more impactful in the evaluation
-CENTRAL_COEF = 100
+CENTRAL_COEF = 0.05
 
 # Centrality coefficient in the evaluation is accounted for less and less, as the game goes on
-CENTRAL_TERM_PHASE = 25
+CENTRAL_TERM_PHASE = 15
 
 
 def _compute_centrality():

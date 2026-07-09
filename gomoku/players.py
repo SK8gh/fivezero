@@ -14,8 +14,7 @@ from engine import FiveZeroEngine
 from utils import Board, Move
 
 from configuration import (
-    FIRST_BLACK_MOVE_INDEX_ENGINE,
-    NEIGHBORS,
+    NEIGHBOURS,
     Colors
 )
 
@@ -92,7 +91,14 @@ class EnginePlayer(Player):
             # The engine just moved, the opponent is on the clock, triggering the pondering
             self._start_ponder()
 
-        logging.info(f"Engine evaluation: {self.engine.evaluate(board_bytes=self.engine.board.board, tempo=color)}")
+        score = self.engine.evaluate(
+            board_bytes=self.engine.board.board,
+            tempo=color,
+            centrality=self.engine.board.centrality,
+            n_moves=self.engine.board.n_moves
+        )
+
+        logging.info(f"Engine evaluation: {score}")
 
     def compute_move(self, game) -> int | None:
         move = self.engine.search(
@@ -173,7 +179,7 @@ class EnginePlayer(Player):
             # Warm the most likely replies first (same ordering as the real search).
             replies = sorted(
                 board.closest_moves,
-                key=lambda i: len(NEIGHBORS[i]),
+                key=lambda i: len(NEIGHBOURS[i]),
                 reverse=True
             )
 
