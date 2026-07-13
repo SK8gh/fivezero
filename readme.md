@@ -6,6 +6,10 @@
 
 <p align="center">A Gomoku (five-in-a-row) engine &amp; desktop game, written in Python.</p>
 
+<p align="center">
+  <img src="distribution/game_ex.png" alt="FiveZero gameplay">
+</p>
+
 ---
 
 ## The game
