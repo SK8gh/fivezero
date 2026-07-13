@@ -3,9 +3,9 @@
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Tuple, List
 from dataclasses import dataclass, field
 from utils import Board, Move
+from typing import Optional
 import numpy as np
 import threading
 import logging

@@ -334,7 +334,7 @@ def _eval_delta(board_np, rows, lens, offs, score_all, idx, color):
     when board[idx] goes from empty to `color`. Only rescans the segments
     passing through idx (rows/lens/offs come from the precomputed per-square
     map). The target square is treated as empty in the "old" signature and as
-    `color` in the "new" one, so this is valid whether or not the stone has
+    `color` in the "new" one, so this is valid regardless of whether the stone has
     already been written to the board.
     """
     d_black = 0
