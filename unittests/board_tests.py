@@ -329,7 +329,9 @@ class TestBoardMoves(unittest.TestCase):
         """
         board = Board()
 
-        for j, index in enumerate((139, 115, 143, 39, 207, 91, 168, 151, 100, 13)):
+        indexes = (139, 115, 143, 39, 207, 91, 168, 151, 100, 13)
+
+        for j, index in enumerate(indexes):
             try:
                 board.move(
                     Move(index=index, color=j % 2 + 1)

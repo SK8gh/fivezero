@@ -15,11 +15,9 @@ from configuration import (
 
 from utils import Board
 
-BLACK, WHITE, EMPTY = Colors.BLACK, Colors.WHITE, Board.EMPTY
-
 
 def opponent(color: int) -> int:
-    return WHITE if color == BLACK else BLACK
+    return Colors.WHITE if color == Colors.BLACK else Colors.BLACK
 
 
 class GomokuGame:
@@ -34,10 +32,10 @@ class GomokuGame:
 
     def reset(self) -> None:
         # keeping track the board state
-        self.cells: list[int] = [EMPTY] * (BOARD_SIZE * BOARD_SIZE)
+        self.cells: list[int] = [Board.EMPTY] * (BOARD_SIZE * BOARD_SIZE)
 
         # current player having the trait
-        self.current: int = BLACK
+        self.current: int = Colors.BLACK
 
         # last move played on the board
         self.last_move: int | None = None
@@ -65,13 +63,13 @@ class GomokuGame:
         """
         returns true if a cell is empty, false otherwise
         """
-        return self.cells[i] == EMPTY
+        return self.cells[i] == Board.EMPTY
 
     def play(self, j: int) -> bool:
         """
         plays move, returns true if the move was legal, false otherwise
         """
-        if self.over or not (0 <= j < len(self.cells)) or self.cells[j] != EMPTY:
+        if self.over or not (0 <= j < len(self.cells)) or self.cells[j] != Board.EMPTY:
             """
             game is over, or move is out of bounds, or cell is already occupied
             """

@@ -5,10 +5,6 @@
 
     Design notes
     ------------
-    * Pondering is OFF (see build_engine): each engine only searches on its own
-      move. That keeps the comparison fair AND means only one engine thinks at a
-      time -- which is what lets us safely reuse the singleton EngineConfig,
-      re-pointing max_depth / max_time at the side-to-move right before its search.
     * The engine's internal Board is kept in sync incrementally with fork_move()
       in notify_move(), so we never rebuild it from scratch.
 
@@ -24,7 +20,7 @@
 # library imports
 from __future__ import annotations
 
-from gomoku.game import GomokuGame, BLACK, WHITE
+from gomoku.game import GomokuGame
 from engine import FiveZeroEngine, EngineSpec
 from datetime import datetime, timezone
 from math import comb, erf, sqrt
@@ -33,13 +29,16 @@ from math import comb, erf, sqrt
 from utils import Move
 
 from configuration import (
-    FIRST_BLACK_MOVE_INDEX_ENGINE
+    FIRST_BLACK_MOVE_INDEX_ENGINE,
+    Colors
 )
+
+BLACK, WHITE = Colors.BLACK, Colors.WHITE
 
 
 class _EnginePlayer:
     """
-    wraps a FiveZeroEngine so it satisfies the interface main.py relies on:
+    wraps a FiveZeroEngine such that it satisfies the interface main.py relies on:
         is_human, compute_move(game), notify_move(index, color), close()
 
     Heavy engine imports are done lazily so that importing this module (e.g.
@@ -166,7 +165,7 @@ class Arena:
         Two-sided binomial p-value under H0 'the two engines are equally strong'
         (each decisive game is a fair coin flip, p=0.5). Draws are excluded.
         Exact below 1000 decisive games, normal approximation above (fast + precise
-        at that scale).
+        at that scale)
         """
         n = self.wins_a + self.wins_b  # decisive games only
 

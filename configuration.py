@@ -27,10 +27,10 @@ MOVE_MAX_DISTANCE = 2
 NEIGHBOURS = {index: set() for index in range(BOARD_SIZE * BOARD_SIZE)}
 
 # Maximum number of moves to look ahead for
-ENGINE_DEPTH = 4
+ENGINE_DEPTH = 5
 
 # Tempo factor, used to evaluate positions based on who has the trait
-TEMPO_FACTOR = 1.5
+TEMPO_FACTOR = 1.2
 
 # Can't play more moves that the number of squares on the board
 MAX_NUMBER_MOVES = BOARD_SIZE * BOARD_SIZE
@@ -124,7 +124,7 @@ class EngineConfig:
 
         # checking that only the allowed keys are present in the "extra" dictionary
         for key in extra:
-            assert key in ('depth', 'max_time', 'ordering', )
+            assert key in ('depth', 'max_time', 'incremental', )
 
         # maximum engine depth when performing searches
         self.max_depth: int = extra.get('depth', ENGINE_DEPTH)
@@ -286,21 +286,65 @@ def _compute_eval_tables():
         EVAL_TABLES.append((SEG_INDICES[length], SCORE_ARRAY[length]))
 
 
-# defining the weights of each square based on its centrality to score higher more central squares
-CENTER_WEIGHTS = np.empty(BOARD_SIZE * BOARD_SIZE, dtype=np.int16)
+# ---------------------------------------------------------------------------
+# incremental-evaluation tables
+#
+# For O(1) leaf evaluation the board keeps, per color, a running sum of pattern
+# scores and updates only the segments passing through the played square on
+# move/undo. These feed the Numba delta in utils.py:
+#   SCORE_ALL    : all per-length SCORE_ARRAY tables concatenated, indexed by
+#                  (offset-of-length + base-3 signature)
+#   SQ_ROWS[idx] : (K_MAX, MAX_SEG_LEN) int32, flat cell indices of every segment
+#                  passing through `idx` (rows padded with -1)
+#   SQ_LEN[idx]  : (K_MAX,) int32, true length of each such segment (0 = padding)
+#   SQ_OFF[idx]  : (K_MAX,) int64, offset into SCORE_ALL for that segment's length
+# ---------------------------------------------------------------------------
+SCORE_ALL = None
+SQ_ROWS = None
+SQ_LEN = None
+SQ_OFF = None
 
-# the coefficient used to multiply the centrality weight of a square to make it more impactful in the evaluation
-CENTRAL_COEF = 0.05
 
-# Centrality coefficient in the evaluation is accounted for less and less, as the game goes on
-CENTRAL_TERM_PHASE = 15
+def _compute_incremental_tables():
+    """Must run AFTER _compute_eval_tables(): builds the per-square segment map."""
+    global SCORE_ALL, SQ_ROWS, SQ_LEN, SQ_OFF
 
+    lengths = sorted(SCORE_ARRAY)
 
-def _compute_centrality():
-    for i in range(BOARD_SIZE):
-        for j in range(BOARD_SIZE):
-            dist = abs(i - CENTER) + abs(j - CENTER)
-            CENTER_WEIGHTS[index(i, j)] = 2 * CENTER - dist
+    # offset of each length's table inside the concatenated SCORE_ALL
+    offset = {}
+    running = 0
+    for length in lengths:
+        offset[length] = running
+        running += 3 ** length
+
+    SCORE_ALL = np.concatenate([SCORE_ARRAY[length] for length in lengths]).astype(np.int64)
+
+    max_len = max(lengths)
+
+    # for each square, collect the segments that pass through it
+    per_square = {i: [] for i in range(BOARD_SIZE * BOARD_SIZE)}
+    for length, segments in PATTERN_INDEXATION.items():
+        off = offset[length]
+        for seg in segments:
+            for cell in seg:
+                per_square[cell].append((seg, length, off))
+
+    k_max = max(len(v) for v in per_square.values())
+
+    n = BOARD_SIZE * BOARD_SIZE
+    SQ_ROWS = np.full((n, k_max, max_len), -1, dtype=np.int32)
+    SQ_LEN = np.zeros((n, k_max), dtype=np.int32)
+    SQ_OFF = np.zeros((n, k_max), dtype=np.int64)
+
+    for idx in range(n):
+        for k, (seg, length, off) in enumerate(per_square[idx]):
+            for j, cell in enumerate(seg):
+                SQ_ROWS[idx, k, j] = cell
+            SQ_LEN[idx, k] = length
+            SQ_OFF[idx, k] = off
+
+    logging.debug("Built incremental-evaluation tables (K_MAX=%d)", k_max)
 
 
 @timecall
@@ -316,8 +360,8 @@ def initialize_config():
 
     _compute_eval_tables()
 
-    # pre-computing centrality weights for each square
-    _compute_centrality()
+    # pre-computing the per-square segment map used by the incremental evaluator
+    _compute_incremental_tables()
 
 
 initialize_config()

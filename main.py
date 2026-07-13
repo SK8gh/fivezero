@@ -13,10 +13,14 @@ import os
 
 # module imports
 from gomoku.players import Player, build_players
-from gomoku.game import GomokuGame, BLACK, WHITE
 from arena.arena import Arena, build_engine
+from gomoku.game import GomokuGame
 from utils import parse_arguments
 import gomoku.ui as ui
+
+from configuration import Colors
+
+BLACK, WHITE = Colors.BLACK, Colors.WHITE
 
 
 def _resource_path(rel: str) -> str:
@@ -464,6 +468,7 @@ if __name__ == "__main__":
         level=arguments.log_level,
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
+        force=True,
     )
 
     logging.info(f"Starting Gomoku application")
