@@ -5,23 +5,22 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, List
 from dataclasses import dataclass, field
-from utils import Board, Move, cache
-from numba import njit
+from utils import Board, Move
 import numpy as np
 import threading
 import logging
+import random
 
 from configuration import (
-    CENTRAL_TERM_PHASE,
-    PATTERN_INDEXATION,
     BYPASS_TIMEOUT,
-    CENTRAL_COEF,
     EngineConfig,
     TEMPO_FACTOR,
-    EVAL_TABLES,
-    NEIGHBORS,
-    FIVE
+    NEIGHBOURS
 )
+
+
+# the four axes a pattern can run along (used by the move-ordering scorer)
+_ORDER_DIRS = np.array([(0, 1), (1, 0), (1, 1), (1, -1)], dtype=np.int64)
 
 
 @dataclass
@@ -46,17 +45,35 @@ class FiveZeroEngine:
         # engine plays the following color that will be set when joining a game
         self.color = engine_color
 
+        # number of positions evaluated during the current search (reset per search)
+        self._eval_count = 0
+
         # board representation
         self.board = Board()
 
-        # decorating the evaluation method at inception of the engine object
-        self.evaluate = cache(spec.id if spec is not None else None)(self.evaluate)
+        # board maintains the running sums
+        self.board.set_eval_tracking()
 
-        # jit-warmup of the evaluation
-        self.evaluate(board_bytes=self.board.board, tempo=self.color)
+        # global jit-warmup
+        self._jit_warmup()
 
         if BYPASS_TIMEOUT:
             logging.warning(f"Engine timeout bypass is enabled")
+
+    def _jit_warmup(self):
+        """
+        when using jit, the function must run once to compile the jitted function once and avoid it running slowly later
+        """
+        logging.debug(f"Launching just-in-time (jit) warmup")
+
+        # jit-warmup of the incremental-evaluation delta (compile on a scratch board)
+        warm = Board()
+        warm.set_eval_tracking()
+        m = Move(index=0, color=1)
+        warm.move(m)
+        warm.undo_move(m)
+
+        logging.debug(f"Done warming up jitted functions")
 
     @staticmethod
     def _manage_spec(spec: Optional[EngineSpec]) -> dict:
@@ -66,39 +83,37 @@ class FiveZeroEngine:
         """
         return spec.params if spec is not None else None
 
-    def _ident_pattern(self, pattern: str, color: int, board_bytes: Optional[bytearray]) -> List[Tuple[int]]:
+    @staticmethod
+    def _order_moves(board: Board) -> list[int]:
         """
-        TODO: write docstring
+        returns the candidate moves ordered best-first.
+
+        NOTE: this always returns a *fresh list* (a snapshot). That is what
+        makes in-place make/unmake safe: we iterate the snapshot while
+        board.closest_moves mutates underneath us as children are made/undone.
         """
-        # initializing necessary variables
-        board, pattern_length, empty_value = (
-            self.board.board if board_bytes is None else board_bytes,  # can either identify patterns in a board
-                                                                       # passed as argument or in the engine's board
-            len(pattern),
-            self.board.EMPTY  # assigning to avoid accessing multiple times
-        )
+        moves = board.closest_moves
 
-        segments = PATTERN_INDEXATION.get(pattern_length)
+        return sorted(moves, key=lambda idx: len(NEIGHBOURS[idx]), reverse=True)
 
-        # making sure that the squares used to identify the pattern were pre-computed
-        assert segments is not None
+    def _evaluate_leaf(self, board: Board, tempo: int) -> int:
+        """
+        leaf evaluation dispatch. When incremental eval is on, this is O(1):
+        it just recombines the board's running per-color sums with the tempo
+        factors -- no board scan, no cache lookup. Otherwise it falls back to
+        the full JIT scan (cached).
 
-        results = []
+        Both paths return the exact same score for a given (position, tempo):
+        incremental is a speed feature, not a strength one.
+        """
+        # count this position toward the current search's evaluation total
+        self._eval_count += 1
 
-        for segment in segments:
-            values = tuple(board[index] for index in segment)
+        opp = 1 if self.color == 2 else 2
+        engine_factor = TEMPO_FACTOR if self.color == tempo else 1.0
+        opp_factor = TEMPO_FACTOR if opp == tempo else 1.0
 
-            signature = "".join(
-                "0" if v == empty_value
-                else "1" if v == color
-                else "2"
-                for v in values
-            )
-
-            if signature == pattern:
-                results.append(segment)
-
-        return results
+        return int(engine_factor * board.eval_sum[self.color] - opp_factor * board.eval_sum[opp])
 
     def search(self, move_timestamp: datetime) -> Move:
         """
@@ -108,12 +123,15 @@ class FiveZeroEngine:
 
         best_move = None
 
+        # reset the per-search counter of evaluated positions
+        self._eval_count = 0
+
         depth = 1
 
         # can't exceed the maximum engine recursion parameter
         while depth <= self.config.max_depth:
             try:
-                logging.debug(f"Searching depth {depth}")
+                logging.info(f"Searching depth {depth}")
 
                 best_move = self._search_depth(
                     search_deadline=search_deadline,
@@ -123,23 +141,37 @@ class FiveZeroEngine:
                 depth += 1
 
             except TimeoutError:
-                # exceeded engine time to answer, breaking and playing
+                # exceeded engine time to answer, breaking and playing.
+                # the make/unmake try/finally chain has already restored
+                # self.board to its pre-search state as the exception unwound.
                 break
+
+        # depth was incremented after each completed pass, so the last fully
+        # searched depth is depth - 1 (0 if even depth 1 timed out)
+        reached_depth = depth - 1
+
+        played = Board.coordinates(best_move.index) if best_move is not None else None
+
+        logging.info(
+            "Evaluated %d positions (reached depth %d) before playing %s",
+            self._eval_count,
+            reached_depth,
+            played,
+        )
 
         return best_move
 
     def _search_depth(self, depth: int, search_deadline: datetime):
         """
-        TODO: explain
+        one iterative-deepening pass at a fixed depth
         """
-        best_move = None
         best_score = float("-inf")
 
-        candidate_moves = sorted(
-            self.board.closest_moves,
-            key=lambda idx: len(NEIGHBORS[idx]),
-            reverse=True
-        )
+        # all root moves that reach the best score so far; one is picked at
+        # random at the end (see below)
+        best_moves: list[Move] = []
+
+        candidate_moves = self._order_moves(self.board)
 
         # raising if no candidate moves were found...
         assert len(candidate_moves) > 0
@@ -156,10 +188,8 @@ class FiveZeroEngine:
                 color=self.color
             )
 
-            board_copy = self.board.fork_move(move=move)
-
             score = self.minimax(
-                board=board_copy,
+                board=self.board.fork_move(move=move),
                 depth=depth - 1,
                 maximizing=False,
                 search_deadline=search_deadline,
@@ -169,9 +199,17 @@ class FiveZeroEngine:
 
             if score > best_score:
                 best_score = score
-                best_move = move
+                best_moves = [move]
 
-        return best_move
+            elif score == best_score:
+                best_moves.append(move)
+
+        # Pick uniformly at random among all equally-best moves. This is
+        # strength-neutral (every choice has the same evaluation) but makes
+        # otherwise-identical games diverge -- without it two engines replay the
+        # exact same game every time, which makes A/B benchmarking meaningless.
+        # Seed `random` once at program start if you want reproducible runs.
+        return random.choice(best_moves) if best_moves else None
 
     def minimax(
         self,
@@ -183,6 +221,10 @@ class FiveZeroEngine:
         beta: float = float("inf"),
         stop_event: Optional[threading.Event] = None
     ):
+        """
+        alpha-beta search. Forks a fresh board per move. A pondering caller running concurrently with the main
+        thread must pass its OWN clone.
+        """
         if stop_event is not None and stop_event.is_set():
             # engine pondering can be interrupted by the main thread. raising a timeout error to stop the search
             raise TimeoutError()
@@ -191,31 +233,14 @@ class FiveZeroEngine:
             # engine thinking time exceeded
             raise TimeoutError()
 
-        # detecting winning moves
-        if self.config.get('terminal'):
-            board_np = np.frombuffer(board.board, dtype=np.uint8)
-            opp = 1 if self.color == 2 else 2
-
-            if self._has_five(board_np, self.color):
-                # detecting winning moves, assigning a better evaluation to the closest wins
-                return FIVE - (self.config.max_depth - depth)
-
-            if self._has_five(board_np, opp):
-                # detecting losing moves, assigning a better evaluation to the furthest losses
-                return -(FIVE - (self.config.max_depth - depth))
-
         if depth == 0 or not board.closest_moves:
             # side to move at this leaf
             opp = 1 if self.color == 2 else 2
             tempo = self.color if maximizing else opp
 
-            return self.evaluate(board_bytes=board.board, tempo=tempo)
+            return self._evaluate_leaf(board, tempo)
 
-        moves = sorted(
-            board.closest_moves,
-            key=lambda idx: len(NEIGHBORS[idx]),
-            reverse=True
-        )
+        moves = self._order_moves(board)
 
         if maximizing:
             value = float("-inf")
@@ -226,10 +251,8 @@ class FiveZeroEngine:
                     color=self.color
                 )
 
-                new_board = board.fork_move(move)
-
                 score = self.minimax(
-                    board=new_board,
+                    board=board.fork_move(move),
                     depth=depth - 1,
                     maximizing=False,
                     search_deadline=search_deadline,
@@ -258,10 +281,8 @@ class FiveZeroEngine:
                     color=opp_color
                 )
 
-                new_board = board.fork_move(move)
-
                 score = self.minimax(
-                    board=new_board,
+                    board=board.fork_move(move),
                     depth=depth - 1,
                     maximizing=True,
                     search_deadline=search_deadline,
@@ -288,89 +309,3 @@ class FiveZeroEngine:
 
         # caution, if the bypass timeout global variable is set to true, the engine will never time out
         return now >= search_deadline and not BYPASS_TIMEOUT
-
-    def evaluate(self, board_bytes: bytearray, tempo: int) -> int:
-        """
-        tempo-aware board scoring, JIT-accelerated.
-
-        Same scoring semantics as before (sum of pattern scores, engine positive /
-        opponent negative, side-to-move amplified by TEMPO_FACTOR), but:
-          - signatures are base-3 ints (no string building)
-          - each segment scanned once for both colors
-          - empty segments skipped
-          - score looked up in a dense table
-          - the whole scan runs as Numba-compiled native code
-        NOTE: this also fixes the old `tempo` variable shadowing — the factor is now
-        applied correctly per color (it previously stayed 1.0 after the first pattern).
-        """
-        opp = 1 if self.color == 2 else 2
-        engine_factor = TEMPO_FACTOR if self.color == tempo else 1.0
-        opp_factor = TEMPO_FACTOR if opp == tempo else 1.0
-
-        # zero-copy view over the bytearray buffer
-        board_np = np.frombuffer(board_bytes, dtype=np.uint8)
-
-        score = 0.0
-
-        for seg_idx, score_table in EVAL_TABLES:
-            score += _eval_length(
-                board_np=board_np,
-                seg_idx=seg_idx,
-                score_table=score_table,
-                engine_color=self.color,
-                engine_factor=engine_factor,
-                opp_factor=opp_factor
-            )
-
-        # if model configuration allows
-        if self.config.extra.get('central_term'):
-            # the first term decreases the impact of the centrality term as the game progresses
-            score += max(0.0, 1 - self.board.n_moves / CENTRAL_TERM_PHASE) * self.board.centrality * CENTRAL_COEF
-
-        return int(score)
-
-
-@njit(cache=True, nogil=True)
-def _eval_length(
-        board_np,
-        seg_idx,
-        score_table,
-        engine_color,
-        engine_factor,
-        opp_factor
-):
-    """
-    JIT-compiled scan of every segment of one length. For each segment it builds
-    both color signatures (base-3 int) in a single pass, skips empty segments,
-    and looks the score up in a dense table. nogil=True lets this run outside the
-    GIL (useful later for threaded root search).
-    """
-    total = 0.0
-    n_seg, length = seg_idx.shape
-    for s in range(n_seg):
-        sig_e = 0
-        sig_o = 0
-        any_stone = False
-        for j in range(length):
-            v = board_np[seg_idx[s, j]]
-            if v == 0:
-                code_e = 0
-                code_o = 0
-            elif v == engine_color:
-                code_e = 1
-                code_o = 2
-                any_stone = True
-            else:
-                code_e = 2
-                code_o = 1
-                any_stone = True
-            sig_e = sig_e * 3 + code_e
-            sig_o = sig_o * 3 + code_o
-        if any_stone:
-            se = score_table[sig_e]
-            if se != 0:
-                total += engine_factor * se
-            so = score_table[sig_o]
-            if so != 0:
-                total -= opp_factor * so
-    return total

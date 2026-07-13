@@ -12,21 +12,16 @@ from engine import EngineSpec
 
 
 MODEL_CATALOG: List[EngineSpec] = [
-    # main production version: depth and all parameters as configured
+    # main production version: full-board scan at every leaf
     EngineSpec(
         id="1.0",
         blurb="PROD",
-        params={
-            "depth": 4
-        }
+        params={}
     ),
 
-    # model implementing the centrality evaluation term
     EngineSpec(
-        id="1.0.1",
-        blurb="+c",
-        params={
-            "depth": 1,
-        }
-    )
+        id="1.0",
+        blurb="PROD",
+        params={}
+    ),
 ]
